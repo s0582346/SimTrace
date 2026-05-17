@@ -1,0 +1,90 @@
+classDiagram
+    direction LR
+
+    class ModelState {
+        +Spec? spec
+        +Assumptions assumptions
+        +DESModel? des_model
+        +VerifierFinding[] verifier_findings
+        +SimulationRun[] simulation_runs
+        +Analysis? analysis
+        +OpenQuestion[] open_questions
+        +ProvenanceEntry[] provenance
+        +int modeler_attempts
+        +int turn_count
+    }
+
+    class Spec {
+        +Entity[] entities
+        +Flow[] flows
+        +KPI[] kpis
+        +str raw_description
+    }
+
+    class Assumptions {
+        +dict~str,int~ capacities
+        +dict~str,Distribution~ arrival_rates
+        +dict~str,Distribution~ service_times
+        +dict~str,Any~ other
+    }
+
+    class DESModel {
+        +Resource[] resources
+        +Process[] processes
+        +Source[] sources
+        +Sink[] sinks
+        +int schema_version
+    }
+
+    class VerifierFinding {
+        +str check
+        +Status status
+        +str? detail
+        +str model_hash
+    }
+
+    class SimulationRun {
+        +int replication
+        +int seed
+        +dict~str,float~ kpis
+        +float runtime_seconds
+    }
+
+    class Analysis {
+        +str summary
+        +dict~str,KPIVerdict~ kpi_verdicts
+        +str[] flagged_gaps
+    }
+
+    class OpenQuestion {
+        +str about
+        +str raised_by
+        +str reason
+        +str? target_agent
+        +bool resolved
+    }
+
+    class ProvenanceEntry {
+        +str author
+        +datetime timestamp
+        +str action
+        +str[] sections_touched
+        +str reasoning
+    }
+
+    class Status {
+        <<enumeration>>
+        PASS
+        FAIL
+        UNCERTAIN
+    }
+
+    ModelState --> Spec
+    ModelState --> Assumptions
+    ModelState --> DESModel
+    ModelState --> VerifierFinding
+    ModelState --> SimulationRun
+    ModelState --> Analysis
+    ModelState --> OpenQuestion
+    ModelState --> ProvenanceEntry
+    VerifierFinding --> Status
