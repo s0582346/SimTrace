@@ -1,0 +1,25 @@
+# Environment / secrets
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenv
+venv/
+.venv/
+
+# Data / runtime
+data/results/
+data/traces/
+*.log
+
+# IDE
+.vscode/
+.idea/
