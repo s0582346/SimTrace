@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://text2sim.com/schemas/des-simpy-production-model.json",
-  "title": "SimPy-Compatible Production/Manufacturing DES Model Configuration",
-  "description": "Practical DES configuration for production and manufacturing systems, optimized for SimPy's native capabilities. Implementation notes: (1) exp(x) uses mean=x, (2) max_wait balking is implemented as a reneging timeout, (3) entity_type probabilities must sum to 1.0, (4) smaller priority numbers = higher priority (e.g. expedited entities), (5) buffer capacities enforce upstream blocking when full, (6) setup_time applies once at workstation entry (sequence-dependent setups use 'changeover_matrix'), (7) scrap removes the entity from the line; rework loops it back to a specified step.",
+  "$id": "https://text2sim.com/schemas/des-simpy-production-model-v2.json",
+  "title": "SimPy-Compatible Production/Manufacturing DES Model Configuration (v2)",
+  "description": "Practical DES configuration for production and manufacturing systems, optimized for SimPy's native capabilities. Implementation notes: (1) exp(x) uses mean=x, (2) max_wait balking is implemented as a reneging timeout, (3) entity_type probabilities must sum to 1.0, (4) smaller priority numbers = higher priority (e.g. expedited entities), (5) buffer capacities enforce upstream blocking when full, (6) setup_time applies once at workstation entry; sequence-dependent setups use 'changeover_matrix' on the workstation (only one of the two is active when both are present, with changeover_matrix taking precedence on family change), (7) scrap removes the entity from the line; rework loops it back to a specified step, (8) parallel_activities forks one entity across multiple branches and rejoins it (the entity keeps its identity), (9) assembly_rules combine multiple entities into one (BOM-style), (10) statistics support per-station and per-entity-type breakdowns; legacy boolean form is still accepted for backwards compatibility.",
   "type": "object",
   "required": ["run_time"],
   "oneOf": [
@@ -40,7 +40,7 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1,
-              "description": "Mix probability for this entity type (must sum to 1.0 across all types)"
+              "description": "Mix probability for this entity type (must sum to 1.0 across all types that are released from the arrival_pattern; types only produced by assembly_rules may use probability 0)"
             },
             "value": {
               "type": "object",
@@ -57,11 +57,6 @@
               "maximum": 10,
               "default": 5,
               "description": "Entity priority (1=highest/expedited, 10=lowest). Used by priority/preemptive workstations and routing rules."
-            },
-            "due_date_offset": {
-              "type": "string",
-              "pattern": "^(uniform|normal|gauss|exp)\\s*\\(\\s*[0-9.]+\\s*(,\\s*[0-9.]+\\s*)?\\)$",
-              "description": "Time-from-release distribution for due-date computation (used for tardiness KPIs)"
             },
             "process_plan": {
               "type": "string",
@@ -119,7 +114,18 @@
             "setup_time": {
               "type": "string",
               "pattern": "^(uniform|normal|gauss|exp)\\s*\\(\\s*[0-9.]+\\s*(,\\s*[0-9.]+\\s*)?\\)$",
-              "description": "Time-independent setup time applied once per entity arrival at this workstation"
+              "description": "Sequence-independent setup time applied once per entity arrival at this workstation. Superseded by changeover_matrix when a family change is detected."
+            },
+            "changeover_matrix": {
+              "type": "object",
+              "description": "Sequence-dependent setup times keyed by 'FromFamily>ToFamily' (the 'family' attribute on entity_types). The matrix is consulted on every entity arrival; if the previous entity's family differs from the current entity's, the matching duration is applied. Keys with identical from/to (e.g. 'A>A') may be set to zero or omitted (omitted = no setup).",
+              "patternProperties": {
+                "^[a-zA-Z0-9_]+>[a-zA-Z0-9_]+$": {
+                  "type": "string",
+                  "pattern": "^(uniform|normal|gauss|exp)\\s*\\(\\s*[0-9.]+\\s*(,\\s*[0-9.]+\\s*)?\\)$"
+                }
+              },
+              "additionalProperties": false
             },
             "batch_processing": {
               "type": "object",
@@ -259,6 +265,168 @@
         {
           "plan_premium": {"steps": ["cnc_mill", "heat_treat", "assembly", "inspection"]},
           "plan_standard": {"steps": ["cnc_mill", "assembly", "inspection"]}
+        }
+      ]
+    },
+    "parallel_activities": {
+      "type": "object",
+      "description": "Fork-join blocks: one entity occupies multiple workstation branches concurrently and resumes its routing only when the join condition is met. The entity retains its identity throughout (this is not splitting). Service times for each branch step are taken from processing_rules just like for sequential steps.",
+      "patternProperties": {
+        "^[a-zA-Z][a-zA-Z0-9_]*$": {
+          "type": "object",
+          "required": ["after_step", "branches", "join_policy", "continue_at"],
+          "properties": {
+            "after_step": {
+              "type": "string",
+              "description": "Workstation after which the fork begins. The entity does not visit any other workstation between after_step and the branches."
+            },
+            "branches": {
+              "type": "array",
+              "minItems": 2,
+              "description": "Concurrent branches; each is a sequence of workstations the entity occupies simultaneously with the other branches.",
+              "items": {
+                "type": "object",
+                "required": ["steps"],
+                "properties": {
+                  "steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "description": "Ordered workstation sequence within this branch"
+                  },
+                  "optional": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "If true, this branch may be skipped when join_policy permits (e.g. 'any_k'). Has no effect under 'all'."
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "join_policy": {
+              "enum": ["all", "any", "any_k"],
+              "default": "all",
+              "description": "Release condition at the join: 'all' = wait for every branch (AND-join), 'any' = release on the first branch to finish and cancel the rest, 'any_k' = release once k branches have finished."
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Required when join_policy='any_k'; must be <= number of branches."
+            },
+            "continue_at": {
+              "type": "string",
+              "description": "Workstation the entity proceeds to after the join. Must appear in the entity's routing (processing_rules.steps or its process_plan)."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "examples": [
+        {
+          "paint_and_wire": {
+            "after_step": "body_prep",
+            "branches": [
+              {"steps": ["paint_booth", "paint_dry"]},
+              {"steps": ["wiring_station"]}
+            ],
+            "join_policy": "all",
+            "continue_at": "final_assembly"
+          },
+          "triple_inspection": {
+            "after_step": "machining",
+            "branches": [
+              {"steps": ["dimensional_check"]},
+              {"steps": ["surface_check"]},
+              {"steps": ["electrical_check"], "optional": true}
+            ],
+            "join_policy": "any_k",
+            "k": 2,
+            "continue_at": "packing"
+          }
+        }
+      ]
+    },
+    "assembly_rules": {
+      "type": "object",
+      "description": "Rules for combining multiple entities into a single output entity at an assembly station (BOM-style). The station blocks until all required input quantities are available; with match_attribute, only matching components may be combined.",
+      "patternProperties": {
+        "^[a-zA-Z][a-zA-Z0-9_]*$": {
+          "type": "object",
+          "required": ["station", "inputs", "output_type"],
+          "properties": {
+            "station": {
+              "type": "string",
+              "description": "Workstation where the assembly takes place"
+            },
+            "inputs": {
+              "type": "array",
+              "minItems": 1,
+              "description": "Required component entities and their quantities (BOM). Assembly waits until all are available.",
+              "items": {
+                "type": "object",
+                "required": ["entity_type", "quantity"],
+                "properties": {
+                  "entity_type": {
+                    "type": "string",
+                    "description": "Component entity type (must exist in entity_types)"
+                  },
+                  "quantity": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Number of this component required per assembly"
+                  },
+                  "match_attribute": {
+                    "type": "string",
+                    "description": "If set, components are only matched when this attribute is equal across all inputs (e.g. 'order_id' to keep customer-specific kits together)"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "output_type": {
+              "type": "string",
+              "description": "Entity type of the assembled output (must exist in entity_types; may have probability 0)"
+            },
+            "max_wait": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Maximum time the station waits for missing components before timing out (omit for unbounded wait)"
+            },
+            "on_timeout": {
+              "enum": ["scrap_partial", "release_partial", "continue_waiting"],
+              "default": "continue_waiting",
+              "description": "Behavior when max_wait elapses without all components present"
+            },
+            "inherit_attributes_from": {
+              "type": "string",
+              "description": "Which input's attributes the output inherits (entity_type name). If omitted, output uses output_type defaults."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "examples": [
+        {
+          "frame_assembly": {
+            "station": "assembly",
+            "inputs": [
+              {"entity_type": "chassis", "quantity": 1, "match_attribute": "order_id"},
+              {"entity_type": "engine", "quantity": 1, "match_attribute": "order_id"},
+              {"entity_type": "wheel", "quantity": 4}
+            ],
+            "output_type": "vehicle",
+            "max_wait": 240,
+            "on_timeout": "continue_waiting",
+            "inherit_attributes_from": "chassis"
+          },
+          "kit_pack": {
+            "station": "packing",
+            "inputs": [
+              {"entity_type": "part_a", "quantity": 2},
+              {"entity_type": "part_b", "quantity": 1}
+            ],
+            "output_type": "kit"
+          }
         }
       ]
     },
@@ -642,16 +810,165 @@
     },
     "statistics": {
       "type": "object",
-      "description": "Additional statistics to collect",
+      "description": "Statistics collection. Each metric is an object with 'enabled', optional breakdown dimensions (per_station, per_entity_type), and optional distribution detail (percentiles, histogram, time_buckets). For backwards compatibility, a boolean may still be passed in place of the object (e.g. 'collect_wait_times': true is equivalent to 'wait_times': {'enabled': true}).",
       "properties": {
-        "collect_wait_times": {"type": "boolean", "default": true, "description": "Per-step queue wait times"},
-        "collect_queue_lengths": {"type": "boolean", "default": false, "description": "Queue length time series (also covers buffer levels)"},
-        "collect_utilization": {"type": "boolean", "default": true, "description": "Workstation utilization (busy + setup + repair)"},
-        "collect_cycle_time": {"type": "boolean", "default": true, "description": "End-to-end entity cycle time (release to completion)"},
-        "collect_wip": {"type": "boolean", "default": true, "description": "WIP level over time (for Little's Law)"},
-        "collect_tardiness": {"type": "boolean", "default": false, "description": "Lateness vs. due_date_offset (requires due_date_offset on entity_types)"},
-        "collect_oee": {"type": "boolean", "default": false, "description": "Compute OEE = Availability x Performance x Quality per workstation"},
-        "warmup_period": {"type": "number", "minimum": 0, "default": 0, "description": "Time to exclude from statistics (steady-state analysis)"}
+        "warmup_period": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Time to exclude from statistics (steady-state analysis)"
+        },
+        "wait_times": {
+          "oneOf": [
+            {"type": "boolean"},
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": true},
+                "per_station": {"type": "boolean", "default": false, "description": "Report wait times broken down by workstation"},
+                "per_entity_type": {"type": "boolean", "default": false, "description": "Report wait times broken down by entity type"},
+                "percentiles": {
+                  "type": "array",
+                  "items": {"type": "number", "minimum": 0, "maximum": 100},
+                  "default": [50, 95],
+                  "description": "Percentiles to report in addition to mean and max"
+                },
+                "histogram": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {"type": "boolean", "default": false},
+                    "bins": {"type": "integer", "minimum": 1, "default": 20}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "queue_lengths": {
+          "oneOf": [
+            {"type": "boolean"},
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": true},
+                "per_station": {"type": "boolean", "default": true},
+                "report": {
+                  "type": "array",
+                  "items": {"enum": ["avg", "max", "time_series"]},
+                  "default": ["avg", "max"],
+                  "description": "Which queue-length statistics to emit"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "cycle_time": {
+          "oneOf": [
+            {"type": "boolean"},
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": true},
+                "per_entity_type": {"type": "boolean", "default": false, "description": "Report cycle time broken down by entity type"},
+                "percentiles": {
+                  "type": "array",
+                  "items": {"type": "number", "minimum": 0, "maximum": 100},
+                  "default": [50, 95]
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "throughput": {
+          "oneOf": [
+            {"type": "boolean"},
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": true},
+                "per_entity_type": {"type": "boolean", "default": false, "description": "Report throughput counts broken down by entity type"},
+                "time_buckets": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "If set, also report throughput per time bucket of this length (e.g. 60 for hourly)"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "utilization": {
+          "oneOf": [
+            {"type": "boolean"},
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": true},
+                "per_station": {"type": "boolean", "default": true},
+                "decompose": {"type": "boolean", "default": false, "description": "Split utilization into busy / setup / repair / blocked / starved"}
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "wip": {
+          "oneOf": [
+            {"type": "boolean"},
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": true},
+                "per_station": {"type": "boolean", "default": false, "description": "Report WIP per workstation as well as system-level"},
+                "report": {
+                  "type": "array",
+                  "items": {"enum": ["avg", "max", "time_series"]},
+                  "default": ["avg", "max"]
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "oee": {
+          "oneOf": [
+            {"type": "boolean"},
+            {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": false, "description": "Compute OEE = Availability x Performance x Quality per workstation"},
+                "per_station": {"type": "boolean", "default": true}
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "events": {
+          "type": "object",
+          "description": "Time-stamped event logs for post-hoc analysis of discrete occurrences (balks, reneges, breakdowns). Useful when the distribution over time matters, not just the total count.",
+          "properties": {
+            "log_balks": {"type": "boolean", "default": false},
+            "log_reneges": {"type": "boolean", "default": false},
+            "log_breakdowns": {"type": "boolean", "default": false},
+            "log_scrap": {"type": "boolean", "default": false},
+            "log_rework": {"type": "boolean", "default": false},
+            "time_buckets": {
+              "type": "number",
+              "minimum": 0,
+              "description": "If set, also aggregate event counts into buckets of this length"
+            }
+          },
+          "additionalProperties": false
+        },
+        "collect_wait_times": {"type": "boolean", "deprecated": true, "description": "Deprecated alias for wait_times.enabled (no breakdown). Kept for backwards compatibility."},
+        "collect_queue_lengths": {"type": "boolean", "deprecated": true, "description": "Deprecated alias for queue_lengths.enabled."},
+        "collect_utilization": {"type": "boolean", "deprecated": true, "description": "Deprecated alias for utilization.enabled."},
+        "collect_cycle_time": {"type": "boolean", "deprecated": true, "description": "Deprecated alias for cycle_time.enabled."},
+        "collect_wip": {"type": "boolean", "deprecated": true, "description": "Deprecated alias for wip.enabled."},
+        "collect_oee": {"type": "boolean", "deprecated": true, "description": "Deprecated alias for oee.enabled."}
       },
       "additionalProperties": false
     }
@@ -712,24 +1029,99 @@
         "value_metric": "total_revenue"
       },
       "statistics": {
-        "collect_wait_times": true,
-        "collect_queue_lengths": true,
-        "collect_utilization": true,
-        "collect_cycle_time": true,
-        "collect_wip": true,
-        "collect_oee": true,
-        "warmup_period": 240
+        "warmup_period": 240,
+        "wait_times": {"enabled": true, "per_station": true, "percentiles": [50, 95]},
+        "queue_lengths": {"enabled": true, "per_station": true, "report": ["avg", "max"]},
+        "utilization": {"enabled": true, "per_station": true, "decompose": true},
+        "cycle_time": {"enabled": true, "per_entity_type": true},
+        "wip": {"enabled": true, "per_station": true},
+        "oee": {"enabled": true, "per_station": true}
+      }
+    },
+    {
+      "title": "PCB Assembly with Parallel Sub-Assembly",
+      "description": "Electronics line where each order forks into SMD placement, soldering, and firmware flashing, rejoins, then proceeds to QC. Demonstrates parallel_activities with per-station and per-entity-type statistics.",
+      "run_time": 480,
+      "time_unit": "minutes",
+      "arrival_pattern": {"distribution": "uniform(6, 12)"},
+      "entity_types": {
+        "standard_order": {"probability": 0.75, "value": {"min": 80, "max": 80}, "priority": 5},
+        "rush_order": {"probability": 0.25, "value": {"min": 200, "max": 200}, "priority": 1}
+      },
+      "workstations": {
+        "kitting": {"capacity": 1, "resource_type": "fifo"},
+        "smd": {"capacity": 2, "resource_type": "priority"},
+        "soldering": {"capacity": 1, "resource_type": "priority"},
+        "firmware": {"capacity": 1, "resource_type": "fifo"},
+        "qc_packaging": {"capacity": 1, "resource_type": "priority"}
+      },
+      "processing_rules": {
+        "steps": ["kitting", "smd", "soldering", "firmware", "qc_packaging"],
+        "kitting": {"distribution": "uniform(4, 7)", "scale_by_batch": false},
+        "smd": {
+          "conditional_distributions": {
+            "standard_order": "normal(10, 2)",
+            "rush_order": "normal(7, 1.5)"
+          },
+          "scale_by_batch": false
+        },
+        "soldering": {
+          "conditional_distributions": {
+            "standard_order": "uniform(8, 14)",
+            "rush_order": "uniform(5, 9)"
+          },
+          "scale_by_batch": false
+        },
+        "firmware": {"distribution": "uniform(3, 6)", "scale_by_batch": false},
+        "qc_packaging": {"distribution": "normal(6, 1)", "scale_by_batch": false}
+      },
+      "parallel_activities": {
+        "pcb_sub_assembly": {
+          "after_step": "kitting",
+          "branches": [
+            {"steps": ["smd"]},
+            {"steps": ["soldering"]},
+            {"steps": ["firmware"]}
+          ],
+          "join_policy": "all",
+          "continue_at": "qc_packaging"
+        }
+      },
+      "balking_rules": {
+        "kitting_overflow": {
+          "type": "queue_length",
+          "resource": "kitting",
+          "max_length": 8
+        }
+      },
+      "breakdowns": {
+        "smd": {"mtbf": "exp(150)", "repair_time": "uniform(10, 25)", "preempt_in_progress": true}
+      },
+      "metrics": {
+        "released_metric": "orders_received",
+        "completed_metric": "orders_completed",
+        "balk_metric": "orders_balked",
+        "value_metric": "total_revenue"
+      },
+      "statistics": {
+        "warmup_period": 30,
+        "wait_times": {"enabled": true, "per_station": true, "per_entity_type": true, "percentiles": [50, 95], "histogram": {"enabled": true, "bins": 20}},
+        "queue_lengths": {"enabled": true, "per_station": true, "report": ["avg", "max"]},
+        "cycle_time": {"enabled": true, "per_entity_type": true, "percentiles": [50, 95]},
+        "throughput": {"enabled": true, "per_entity_type": true, "time_buckets": 60},
+        "utilization": {"enabled": true, "per_station": true, "decompose": true},
+        "events": {"log_balks": true, "log_breakdowns": true, "time_buckets": 60}
       }
     },
     {
       "title": "Mixed-Routing Job Shop with Batch Oven",
-      "description": "Two routings: premium parts pass through a batch heat-treat oven, standard parts skip it. Shift schedule and tardiness tracked against due dates.",
+      "description": "Two routings: premium parts pass through a batch heat-treat oven, standard parts skip it. Shift schedule applied to all workstations.",
       "run_time": 4800,
       "time_unit": "minutes",
       "arrival_pattern": {"distribution": "exp(8)"},
       "entity_types": {
-        "standard_part": {"probability": 0.6, "value": {"min": 40, "max": 70}, "priority": 5, "process_plan": "plan_standard", "due_date_offset": "uniform(240, 480)", "attributes": {"family": "A"}},
-        "premium_part": {"probability": 0.4, "value": {"min": 120, "max": 200}, "priority": 3, "process_plan": "plan_premium", "due_date_offset": "uniform(480, 720)", "attributes": {"family": "B"}}
+        "standard_part": {"probability": 0.6, "value": {"min": 40, "max": 70}, "priority": 5, "process_plan": "plan_standard", "attributes": {"family": "A"}},
+        "premium_part": {"probability": 0.4, "value": {"min": 120, "max": 200}, "priority": 3, "process_plan": "plan_premium", "attributes": {"family": "B"}}
       },
       "workstations": {
         "cnc_mill": {"capacity": 2, "resource_type": "fifo", "setup_time": "normal(15, 3)"},
@@ -773,12 +1165,12 @@
         "value_metric": "contribution_margin"
       },
       "statistics": {
-        "collect_cycle_time": true,
-        "collect_wip": true,
-        "collect_utilization": true,
-        "collect_tardiness": true,
-        "collect_oee": true,
-        "warmup_period": 480
+        "warmup_period": 480,
+        "cycle_time": {"enabled": true, "per_entity_type": true},
+        "throughput": {"enabled": true, "per_entity_type": true},
+        "wip": {"enabled": true, "per_station": true},
+        "utilization": {"enabled": true, "per_station": true, "decompose": true},
+        "oee": {"enabled": true, "per_station": true}
       }
     }
   ],
