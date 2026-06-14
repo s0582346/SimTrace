@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from simgen.tools import edges, nodes
+from simgen.tools import edges, nodes, simulation
 
 
 def register_tools(mcp: FastMCP) -> FastMCP:
@@ -274,5 +274,42 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             delay=delay,
             transit_delay=transit_delay,
         )
+
+    @mcp.tool()
+    def connect(edge_id: str, src_id: str, dest_id: str) -> dict:
+        """Wire a single edge between two nodes.
+
+        Appends the edge to the source node's out_edges and the destination
+        node's in_edges. An edge connects exactly one src to one dest; a node
+        accumulates several in/out edges by being the endpoint of several
+        connect calls.
+
+        Args:
+            edge_id: id of an existing edge (Buffer/Conveyor/Fleet).
+            src_id: id of the source (upstream) node.
+            dest_id: id of the destination (downstream) node.
+        """
+        return simulation.connect(edge_id=edge_id, src_id=src_id, dest_id=dest_id)
+
+    @mcp.tool()
+    def get_model() -> dict:
+        """Return a snapshot of the current graph.
+
+        Lists every node (with its in/out edge counts) and every edge (with its
+        resolved src/dest node ids). Read-only.
+        """
+        return simulation.get_model()
+
+    @mcp.tool()
+    def run_simulation(until: float) -> dict:
+        """Run the simulation up to time `until` and return a stats summary.
+
+        This executes the model: any unmet edge-cardinality requirement (e.g. a
+        Source with no out_edge) surfaces here. Returns per-node/edge stats.
+
+        Args:
+            until: simulation end time; must be a positive number.
+        """
+        return simulation.run_simulation(until=until)
 
     return mcp
