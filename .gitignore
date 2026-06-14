@@ -26,3 +26,8 @@ data/traces/
 # IDE
 .vscode/
 .idea/
+
+
+# TEMP
+architecture/
+schemas/
