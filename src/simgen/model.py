@@ -1,7 +1,7 @@
 """Shared, session-scoped simulation model.
 
 Holds the single `simpy.Environment` that every Node instance is bound to,
-plus the registries of nodes (and, later, edges) that the MCP tools build up.
+plus the registries of nodes and edges that the MCP tools build up.
 
 For now there is exactly one model per MCP server session, exposed as a
 module-level singleton via `get_model()`. `reset_model()` starts a fresh one
@@ -24,10 +24,26 @@ class FactoryModel:
     def has_node(self, node_id: str) -> bool:
         return node_id in self.nodes
 
+    def has_edge(self, edge_id: str) -> bool:
+        return edge_id in self.edges
+
+    def has_id(self, component_id: str) -> bool:
+        """True if the id is taken by either a node or an edge.
+
+        Node and edge ids share one namespace so that `connect`/`validate_model`
+        can resolve any endpoint by a single, unambiguous id.
+        """
+        return component_id in self.nodes or component_id in self.edges
+
     def add_node(self, node_id: str, node: object) -> None:
-        if node_id in self.nodes:
+        if self.has_id(node_id):
             raise ValueError(f"A node with id '{node_id}' already exists.")
         self.nodes[node_id] = node
+
+    def add_edge(self, edge_id: str, edge: object) -> None:
+        if self.has_id(edge_id):
+            raise ValueError(f"An edge with id '{edge_id}' already exists.")
+        self.edges[edge_id] = edge
 
 
 _model: FactoryModel | None = None
