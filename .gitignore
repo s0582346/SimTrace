@@ -31,4 +31,6 @@ data/traces/
 # TEMP
 architecture/*
 !architecture/node_tools.md
+!architecture/edge_tools.md
+!architecture/simulation_tools.md
 schemas/
