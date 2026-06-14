@@ -14,18 +14,11 @@ Conventions (see architecture/TOOLS_PLAN.md):
 
 from __future__ import annotations
 
+from factorysimpy.nodes.sink import Sink
 from factorysimpy.nodes.source import Source
 
 from simgen.model import FactoryModel, get_model
-
-
-def _require_number(name: str, value: object) -> None:
-    # bool is an int subclass; exclude it so True/False aren't silently accepted.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(
-            f"{name} must be a constant int or float (got {value!r}). "
-            "Generators/callables are a later extension."
-        )
+from simgen.tools.utils import require_number
 
 
 def create_source(
@@ -64,9 +57,9 @@ def create_source(
     if model.has_node(id):
         raise ValueError(f"A node with id '{id}' already exists.")
 
-    _require_number("inter_arrival_time", inter_arrival_time)
-    _require_number("item_length", item_length)
-    _require_number("node_setup_time", node_setup_time)
+    require_number("inter_arrival_time", inter_arrival_time)
+    require_number("item_length", item_length)
+    require_number("node_setup_time", node_setup_time)
     if flow_item_type not in ("item", "pallet"):
         raise ValueError('flow_item_type must be "item" or "pallet".')
     if not isinstance(out_edge_selection, str):
@@ -97,6 +90,44 @@ def create_source(
         "item_length": item_length,
         "blocking": blocking,
         "out_edge_selection": out_edge_selection,
+        "node_setup_time": node_setup_time,
+        "in_edges": 0,
+        "out_edges": 0,
+    }
+
+
+def create_sink(
+    id: str,
+    node_setup_time: float = 0,
+    *,
+    model: FactoryModel | None = None,
+) -> dict:
+    """Create a Sink node and register it in the shared model.
+
+    A Sink is a terminal node that collects flow items at the end of the line.
+    It has no out_edge and needs at least one in_edge (wired later via connect).
+    Args:
+        id: unique node identifier.
+        node_setup_time: constant initial setup delay.
+
+    Returns a summary dict echoing the stored parameters.
+    """
+    model = model if model is not None else get_model()
+
+    if not isinstance(id, str) or not id:
+        raise ValueError("id must be a non-empty string.")
+    if model.has_node(id):
+        raise ValueError(f"A node with id '{id}' already exists.")
+
+    require_number("node_setup_time", node_setup_time)
+
+    node = Sink(env=model.env, id=id, node_setup_time=node_setup_time)
+
+    model.add_node(id, node)
+
+    return {
+        "id": id,
+        "type": "Sink",
         "node_setup_time": node_setup_time,
         "in_edges": 0,
         "out_edges": 0,

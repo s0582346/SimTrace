@@ -54,4 +54,23 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             node_setup_time=node_setup_time,
         )
 
+    @mcp.tool()
+    def create_sink(
+        id: str,
+        node_setup_time: float = 0,
+    ) -> dict:
+        """Create a Sink node that collects flow items at the end of the line.
+
+        A Sink is terminal: it has no out_edge and needs at least one in_edge
+        (wired later via connect).
+
+        Args:
+            id: unique node identifier.
+            node_setup_time: constant initial setup delay.
+        """
+        return nodes.create_sink(
+            id=id,
+            node_setup_time=node_setup_time,
+        )
+
     return mcp
