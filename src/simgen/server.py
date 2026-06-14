@@ -9,12 +9,15 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from simgen.tools.registry import register_tools
+from simgen.tools.telemetry import configure_telemetry
 
 mcp = FastMCP("simpy_blocks")
 register_tools(mcp)
 
 
 def main() -> None:
+    # Export per-tool spans over OTLP (e.g. to the Jaeger in docker-compose.yml).
+    configure_telemetry()
     mcp.run()
 
 

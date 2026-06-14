@@ -2,7 +2,8 @@
 
 Each tool here is a thin wrapper that delegates to a plain builder in
 `simgen.tools.nodes`/`edges`/`simulation` (which own validation and the shared
-model). As new tools land, register them in `register_tools`.
+model). Every wrapper is decorated with `traced`, so each tool call becomes an
+OpenTelemetry span. As new tools land, register them in `register_tools`.
 """
 
 from __future__ import annotations
@@ -10,12 +11,14 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from simgen.tools import edges, nodes, simulation
+from simgen.tools.telemetry import traced
 
 
 def register_tools(mcp: FastMCP) -> FastMCP:
     """Register every block-building tool on `mcp` and return it."""
 
     @mcp.tool()
+    @traced
     def create_source(
         id: str,
         inter_arrival_time: float = 1.0,
@@ -55,6 +58,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def create_sink(
         id: str,
         node_setup_time: float = 0,
@@ -74,6 +78,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def create_machine(
         id: str,
         work_capacity: int = 1,
@@ -112,6 +117,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def create_splitter(
         id: str,
         mode: str = "UNPACK",
@@ -154,6 +160,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def create_combiner(
         id: str,
         target_quantity_of_each_item: list[int] | None = None,
@@ -192,6 +199,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def create_buffer(
         id: str,
         capacity: int = 1,
@@ -218,6 +226,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def create_conveyor(
         id: str,
         conveyor_length: float,
@@ -250,6 +259,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def create_fleet(
         id: str,
         capacity: int = 1,
@@ -276,6 +286,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         )
 
     @mcp.tool()
+    @traced
     def connect(edge_id: str, src_id: str, dest_id: str) -> dict:
         """Wire a single edge between two nodes.
 
@@ -292,6 +303,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         return simulation.connect(edge_id=edge_id, src_id=src_id, dest_id=dest_id)
 
     @mcp.tool()
+    @traced
     def get_model() -> dict:
         """Return a snapshot of the current graph.
 
@@ -301,6 +313,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         return simulation.get_model()
 
     @mcp.tool()
+    @traced
     def run_simulation(until: float) -> dict:
         """Run the simulation up to time `until` and return a stats summary.
 
