@@ -18,15 +18,14 @@ dev = [
 ]
 
 [project.scripts]
-simgen = "src.cli:main"
+simgen = "simgen.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*", "servers*"]
+where = ["src"]
 
 [tool.uv]
 package = true
