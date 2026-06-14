@@ -9,6 +9,8 @@ dependencies = [
     "pydantic>=2.0",
     "python-dotenv>=1.0.0",
     "rich>=13.0",
+    "numpy>=1.24",
+    "factorysimpy",
 ]
 
 [dependency-groups]
@@ -29,6 +31,9 @@ where = ["src"]
 
 [tool.uv]
 package = true
+
+[tool.uv.sources]
+factorysimpy = { path = "vendor/FactorySimPy", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
