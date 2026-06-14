@@ -1,8 +1,8 @@
 """Central registration of MCP tools onto a FastMCP server.
 
-Each tool here is a thin wrapper that delegates to
-a plain builder in `simgen.tools.nodes` (which owns validation and the shared
-model). As new node tools land, register them in `register_tools`.
+Each tool here is a thin wrapper that delegates to a plain builder in
+`simgen.tools.nodes`/`edges`/`simulation` (which own validation and the shared
+model). As new tools land, register them in `register_tools`.
 """
 
 from __future__ import annotations
