@@ -14,7 +14,7 @@ testing how an MCP client maps a real problem onto the simgen tools.
 
 ## What to watch for
 
-This is an evaluation, not a pass/fail test — the point is to observe what the
+This is an evaluation, so the point is to observe what the
 model decides:
 
 - **Primitive choice** — arrivals → a source, sanding/painting → machines
@@ -30,6 +30,3 @@ model decides:
 - **The analysis** — "where's the bottleneck" is reasoning over the returned
   stats: painting at 5 min/kit against arrivals every 2 min makes paint the
   constraint, and the upstream buffer fills.
-
-With Jaeger running (see the project README), the trace shows the exact sequence
-and parameters the model chose, plus any ERROR spans where it guessed wrong.
