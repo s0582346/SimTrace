@@ -314,6 +314,18 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    def reset_model() -> dict:
+        """Discard the current graph and start a fresh, empty model.
+
+        Drops every node and edge and restarts the simulation clock at 0. Use it
+        to recover from a dirty session: leftover components from earlier work,
+        an orphaned node that can't be wired, or a clock that has already
+        advanced past the `until` you want to run to. Returns the counts cleared.
+        """
+        return simulation.reset_model()
+
+    @mcp.tool()
+    @traced
     def run_simulation(until: float) -> dict:
         """Run the simulation up to time `until` and return a stats summary.
 

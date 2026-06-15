@@ -18,6 +18,7 @@ import io
 
 from simgen.model import FactoryModel
 from simgen.model import get_model as get_session_model
+from simgen.model import reset_model as reset_session_model
 from simgen.tools.utils import require_positive_number
 
 
@@ -109,6 +110,33 @@ def get_model(*, model: FactoryModel | None = None) -> dict:
         for edge_id, edge in model.edges.items()
     ]
     return {"nodes": nodes, "edges": edges}
+
+
+def reset_model() -> dict:
+    """Discard the current session graph and start a fresh, empty one.
+
+    Replaces the session model with a brand-new one: every node and edge is
+    dropped and the simulation clock restarts at 0 (a new `simpy.Environment`).
+    Use this to recover from a dirty session — leftover components from earlier
+    work, an orphaned node that can't be wired or deleted individually, or a
+    clock that has already advanced past the `until` you want to run to.
+
+    Unlike the other lifecycle tools, this always operates on the shared session
+    model (there is nothing to reset in a caller-supplied one).
+
+    Returns a summary of what was cleared and the reset clock.
+    """
+    old = get_session_model()
+    cleared_nodes = len(old.nodes)
+    cleared_edges = len(old.edges)
+
+    reset_session_model()
+
+    return {
+        "cleared_nodes": cleared_nodes,
+        "cleared_edges": cleared_edges,
+        "now": 0,
+    }
 
 
 def run_simulation(
