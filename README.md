@@ -19,7 +19,7 @@ required to use the tools.
 |---|---|---|
 | Nodes (active) | `create_source`, `create_sink`, `create_machine`, `create_splitter`, `create_combiner` | `simgen.tools.nodes` |
 | Edges (passive) | `create_buffer`, `create_conveyor`, `create_fleet` | `simgen.tools.edges` |
-| Lifecycle | `connect`, `get_model`, `run_simulation` | `simgen.tools.simulation` |
+| Lifecycle | `connect`, `get_model`, `reset_model`, `run_simulation` | `simgen.tools.simulation` |
 
 Design notes live in [`architecture/`](architecture/) (`node_tools.md`,
 `edge_tools.md`, `simulation_tools.md`, `observability.md`).
