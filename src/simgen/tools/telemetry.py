@@ -17,8 +17,11 @@ needs no running collector.
 
 from __future__ import annotations
 
+import contextlib
 import functools
-from collections.abc import Callable, Sequence
+import io
+import re
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, TypeVar
 
 from opentelemetry import trace
@@ -32,6 +35,11 @@ tracer = trace.get_tracer("simgen.tools")
 F = TypeVar("F", bound=Callable[..., Any])
 
 _configured = False
+
+# FactorySimPy prints per-tick lines like "T=2.00: M1 puts item item3 into B1".
+# We pull the leading sim-clock time out so it can ride as a span-event
+# attribute; the rest stays as the human-readable message.
+_SIM_LINE = re.compile(r"^T=(?P<time>[\d.]+):\s*(?P<message>.*)$")
 
 # OpenTelemetry span attributes must be a primitive or a homogeneous sequence
 # of primitives. Anything else is rendered to a string.
@@ -71,6 +79,48 @@ def traced(fn: F) -> F:
             return result
 
     return wrapper  # type: ignore[return-value]
+
+
+def _add_sim_event(span: trace.Span, line: str) -> None:
+    """Attach one captured FactorySimPy line to `span` as an event."""
+    match = _SIM_LINE.match(line)
+    if match:
+        span.add_event(
+            "sim.trace",
+            attributes={
+                "sim.time": float(match.group("time")),
+                "sim.message": match.group("message"),
+            },
+        )
+    else:
+        span.add_event("sim.trace", attributes={"sim.message": line})
+
+
+@contextlib.contextmanager
+def traced_stdout() -> Iterator[None]:
+    """Redirect FactorySimPy's stdout into events on the current span.
+
+    FactorySimPy narrates the run with print() (item moves, blocking, discards).
+    Under the MCP stdio transport stdout is the JSON-RPC channel, so that output
+    must never reach it; we redirect stdout to a buffer and, on exit, replay each
+    captured line as an event on whatever span is currently active (the per-tool
+    span opened by `traced`). The trace then lands on the Jaeger timeline next to
+    the tool span instead of being thrown away.
+
+    When telemetry is not configured (e.g. in tests) the current span is
+    OpenTelemetry's no-op span, so `add_event` does nothing and stdout is simply
+    swallowed — same effect as the old silencing, at negligible cost.
+    """
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            yield
+    finally:
+        span = trace.get_current_span()
+        for line in buf.getvalue().splitlines():
+            stripped = line.strip()
+            if stripped:
+                _add_sim_event(span, stripped)
 
 
 def configure_telemetry(service_name: str = "simgen", endpoint: str | None = None) -> None:
