@@ -26,7 +26,7 @@ from typing import Any, TypeVar
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import SpanLimits, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Status, StatusCode
 
@@ -36,10 +36,11 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 _configured = False
 
-# FactorySimPy prints per-tick lines like "T=2.00: M1 puts item item3 into B1".
-# We pull the leading sim-clock time out so it can ride as a span-event
-# attribute; the rest stays as the human-readable message.
-_SIM_LINE = re.compile(r"^T=(?P<time>[\d.]+):\s*(?P<message>.*)$")
+# FactorySimPy prints per-tick lines like "T=2.00: M1 puts item item3 into B1"
+# (a few belt/fleet lines use "T=2.00 ..." with no colon). We pull the leading
+# sim-clock time out so it can ride as a span-event attribute; the rest is the
+# human-readable message that `_classify` turns into a typed event.
+_SIM_LINE = re.compile(r"^T=(?P<time>[\d.]+):?\s*(?P<message>.*)$")
 
 # OpenTelemetry span attributes must be a primitive or a homogeneous sequence
 # of primitives. Anything else is rendered to a string.
@@ -81,19 +82,81 @@ def traced(fn: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
+# The raw FactorySimPy narration is mostly scheduler-internal chatter
+# (worker-thread handoffs, "waiting for in_edge events", belt-phase bookkeeping).
+# For verification & validation only a small item-flow vocabulary matters, so
+# each captured line is matched against this ordered table and anything that
+# matches nothing is dropped — the Jaeger timeline then shows only the flow
+# story.
+_EVENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("discard", re.compile(
+        r"^(?P<node>\S+) (?:worker )?is discarding (?:item|empty pallet) "
+        r"(?P<item>\S+) because out_edge (?P<edge>\S+) is full")),
+    ("generated", re.compile(r"^(?P<node>\S+) generated item: (?P<item>\S+)")),
+    ("received", re.compile(r"^(?P<node>\S+) got an (?P<item>.+)$")),
+    ("get", re.compile(r"^(?P<node>\S+) gets item (?P<item>\S+) from (?P<edge>\S+)")),
+    ("put", re.compile(
+        r"^(?P<node>\S+) (?:worker )?puts (?:item|empty pallet) "
+        r"(?P<item>\S+) into (?P<edge>\S+)")),
+    ("put", re.compile(r"^(?P<node>\S+) puts (?P<item>\S+) item into (?P<edge>\S+)")),
+    ("put", re.compile(r"^(?P<node>\S+) puts item into (?P<edge>\S+)")),
+    ("put", re.compile(r"^(?P<node>\S+) (?P<item>\S+) pushed to buffer (?P<edge>\S+)")),
+    ("process_start", re.compile(
+        r"^(?P<node>\S+) worker started processing item (?P<item>\S+)")),
+    ("process_end", re.compile(
+        r"^(?P<node>\S+) worker processed (?:item|empty pallet): (?P<item>\S+)")),
+    ("blocked", re.compile(r"^(?P<node>\S+) (?:worker )?is in BLOCKED_STATE")),
+    ("state", re.compile(r"^(?P<node>\S+) is in (?P<state>[A-Z][A-Z_]*_STATE)")),
+    ("state", re.compile(r"^(?P<node>\S+) is now (?P<state>\S+)")),
+    ("state", re.compile(r"^(?P<node>\S+) completed (?P<state>setup)")),
+    ("state", re.compile(r"^(?P<node>\S+) state changed from \S+ to (?P<state>\S+)")),
+)
+
+# Flip to True to also surface unmatched lines as generic `sim.other` events —
+# useful when checking the table above isn't silently dropping something real.
+_KEEP_UNMATCHED = False
+
+
+def _classify(message: str) -> tuple[str, dict[str, Any]] | None:
+    """Map one FactorySimPy line to a typed event kind plus its entities.
+
+    Returns `(kind, attributes)` for a recognized line, or None to drop it
+    (unless `_KEEP_UNMATCHED`, which routes the leftovers to an `other` kind).
+    """
+    norm = " ".join(message.split())
+    for kind, pattern in _EVENT_PATTERNS:
+        match = pattern.match(norm)
+        if match:
+            attrs = {
+                f"sim.{name}": value
+                for name, value in match.groupdict().items()
+                if value is not None
+            }
+            return kind, attrs
+    return ("other", {}) if _KEEP_UNMATCHED else None
+
+
 def _add_sim_event(span: trace.Span, line: str) -> None:
-    """Attach one captured FactorySimPy line to `span` as an event."""
-    match = _SIM_LINE.match(line)
-    if match:
-        span.add_event(
-            "sim.trace",
-            attributes={
-                "sim.time": float(match.group("time")),
-                "sim.message": match.group("message"),
-            },
-        )
-    else:
-        span.add_event("sim.trace", attributes={"sim.message": line})
+    """Attach one captured FactorySimPy line to `span` as a typed event.
+
+    The line is split into its sim-clock time and message; the message is
+    classified into one of the item-flow kinds and emitted as a `sim.<kind>`
+    span event carrying the entities it touched (node, item, edge, state) as
+    `sim.*` attributes. Unclassified scheduler noise is dropped so the Jaeger
+    timeline shows only the flow story.
+    """
+    parsed = _SIM_LINE.match(line)
+    time = float(parsed.group("time")) if parsed else None
+    message = parsed.group("message") if parsed else line
+
+    classified = _classify(message)
+    if classified is None:
+        return
+    kind, attrs = classified
+    if time is not None:
+        attrs["sim.time"] = time
+    attrs["sim.message"] = " ".join(message.split())
+    span.add_event(f"sim.{kind}", attributes=attrs)
 
 
 @contextlib.contextmanager
@@ -102,10 +165,11 @@ def traced_stdout() -> Iterator[None]:
 
     FactorySimPy narrates the run with print() (item moves, blocking, discards).
     Under the MCP stdio transport stdout is the JSON-RPC channel, so that output
-    must never reach it; we redirect stdout to a buffer and, on exit, replay each
-    captured line as an event on whatever span is currently active (the per-tool
-    span opened by `traced`). The trace then lands on the Jaeger timeline next to
-    the tool span instead of being thrown away.
+    must never reach it; we redirect stdout to a buffer and, on exit, classify
+    each captured line (`_add_sim_event`) into a typed `sim.<kind>` event on
+    whatever span is currently active (the per-tool span opened by `traced`).
+    Recognized item-flow lines land on the Jaeger timeline next to the tool span;
+    scheduler-internal noise is dropped.
 
     When telemetry is not configured (e.g. in tests) the current span is
     OpenTelemetry's no-op span, so `add_event` does nothing and stdout is simply
@@ -123,7 +187,11 @@ def traced_stdout() -> Iterator[None]:
                 _add_sim_event(span, stripped)
 
 
-def configure_telemetry(service_name: str = "simgen", endpoint: str | None = None) -> None:
+def configure_telemetry(
+    service_name: str = "simgen",
+    endpoint: str | None = None,
+    span_event_limit: int = 2048,
+) -> None:
     """Install an OTLP/HTTP exporting TracerProvider (idempotent).
 
     Args:
@@ -131,6 +199,11 @@ def configure_telemetry(service_name: str = "simgen", endpoint: str | None = Non
         endpoint: OTLP/HTTP traces endpoint. Defaults to the SDK's standard
             resolution (the OTEL_EXPORTER_OTLP_ENDPOINT env var, else
             http://localhost:4318/v1/traces) when None.
+        span_event_limit: max events kept per span. OTel's default is 128, but a
+            single `run_simulation` emits one flow event per item-hop and can far
+            exceed that; raising it keeps the run's trace from being truncated.
+            Long (multi-day) runs can still overflow — the digest/query channels
+            are the durable answer; this just makes the Jaeger view representative.
     """
     global _configured
     if _configured:
@@ -141,7 +214,10 @@ def configure_telemetry(service_name: str = "simgen", endpoint: str | None = Non
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
     resource = Resource.create({"service.name": service_name})
-    provider = TracerProvider(resource=resource)
+    provider = TracerProvider(
+        resource=resource,
+        span_limits=SpanLimits(max_events=span_event_limit),
+    )
     exporter = OTLPSpanExporter(endpoint=endpoint) if endpoint else OTLPSpanExporter()
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
