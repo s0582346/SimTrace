@@ -16,7 +16,6 @@ register_tools(mcp)
 
 
 def main() -> None:
-    # Export per-tool spans over OTLP (e.g. to the Jaeger in docker-compose.yml).
     configure_telemetry()
     mcp.run()
 
