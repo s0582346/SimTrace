@@ -150,7 +150,10 @@ def run_simulation(
 
     require_positive_number("until", until)
 
-    with traced_stdout():
+    # Capture this run's item-flow events onto the model so the validation tools
+    # can analyze them afterwards. Cleared first so each run reflects only its own events
+    model.events.clear()
+    with traced_stdout(collector=model.events):
         model.env.run(until=until)
 
     nodes = {

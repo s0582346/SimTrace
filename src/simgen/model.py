@@ -20,6 +20,7 @@ class FactoryModel:
         self.env = simpy.Environment()
         self.nodes: dict[str, object] = {}
         self.edges: dict[str, object] = {}
+        self.events: list[dict] = [] # Item-flow events captured from the most recent run_simulation
 
     def has_node(self, node_id: str) -> bool:
         return node_id in self.nodes

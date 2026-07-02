@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from simgen.tools import edges, nodes, simulation
+from simgen.tools import edges, nodes, simulation, validation
 from simgen.tools.telemetry import traced
 
 
@@ -336,5 +336,20 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             until: simulation end time; must be a positive number.
         """
         return simulation.run_simulation(until=until)
+
+    @mcp.tool()
+    @traced
+    def verify_conservation() -> dict:
+        """Reconcile every generated item against where it ended up.
+
+        Mass-balances the last run: items all Sources generated must equal items
+        received by Sinks + items still in edges (WIP) + items still in machines
+        + items discarded. A mismatch means items were lost or created — the
+        alarm to raise. Requires a prior run_simulation. Exact for lines without
+        splitters/combiners; those change the physical item count, so the check
+        reports `balanced: null` / `exact: false` and names them in
+        `packing_nodes`.
+        """
+        return validation.verify_conservation()
 
     return mcp

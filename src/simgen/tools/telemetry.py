@@ -136,7 +136,11 @@ def _classify(message: str) -> tuple[str, dict[str, Any]] | None:
     return ("other", {}) if _KEEP_UNMATCHED else None
 
 
-def _add_sim_event(span: trace.Span, line: str) -> None:
+def _add_sim_event(
+    span: trace.Span,
+    line: str,
+    collector: list[dict[str, Any]] | None = None,
+) -> None:
     """Attach one captured FactorySimPy line to `span` as a typed event.
 
     The line is split into its sim-clock time and message; the message is
@@ -144,6 +148,11 @@ def _add_sim_event(span: trace.Span, line: str) -> None:
     span event carrying the entities it touched (node, item, edge, state) as
     `sim.*` attributes. Unclassified scheduler noise is dropped so the Jaeger
     timeline shows only the flow story.
+
+    When `collector` is given, the same classified event is also appended to it
+    as a flat dict (`kind` plus the `sim.*` entities with their prefix stripped:
+    node/item/edge/state/time/message) for post-run analysis by the validation
+    tools.
     """
     parsed = _SIM_LINE.match(line)
     time = float(parsed.group("time")) if parsed else None
@@ -158,9 +167,16 @@ def _add_sim_event(span: trace.Span, line: str) -> None:
     attrs["sim.message"] = " ".join(message.split())
     span.add_event(f"sim.{kind}", attributes=attrs)
 
+    if collector is not None:
+        event = {"kind": kind}
+        event.update((name[len("sim."):], value) for name, value in attrs.items())
+        collector.append(event)
+
 
 @contextlib.contextmanager
-def traced_stdout() -> Iterator[None]:
+def traced_stdout(
+    collector: list[dict[str, Any]] | None = None,
+) -> Iterator[None]:
     """Redirect FactorySimPy's stdout into events on the current span.
 
     FactorySimPy narrates the run with print() (item moves, blocking, discards).
@@ -174,6 +190,10 @@ def traced_stdout() -> Iterator[None]:
     When telemetry is not configured (e.g. in tests) the current span is
     OpenTelemetry's no-op span, so `add_event` does nothing and stdout is simply
     swallowed — same effect as the old silencing, at negligible cost.
+
+    Pass `collector` (a list) to also capture each classified event as a flat
+    dict for post-run analysis by the validation tools. This is independent of
+    telemetry: the events are collected whether or not a real span is active.
     """
     buf = io.StringIO()
     try:
@@ -184,7 +204,7 @@ def traced_stdout() -> Iterator[None]:
         for line in buf.getvalue().splitlines():
             stripped = line.strip()
             if stripped:
-                _add_sim_event(span, stripped)
+                _add_sim_event(span, stripped, collector)
 
 
 def configure_telemetry(
