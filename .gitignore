@@ -34,4 +34,5 @@ architecture/*
 !architecture/edge_tools.md
 !architecture/simulation_tools.md
 !architecture/conservation.md
+!architecture/item_flow.md
 schemas/
