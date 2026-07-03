@@ -12,7 +12,7 @@
 #   .\test-dashboard.ps1 -k source                       # by keyword
 $py  = "C:\Users\paolo\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe"
 $sp  = "C:\local\htw\simgen\.venv\Lib\site-packages"
-$out = "C:/local/htw/simgen/test-dashboard.html"
+$out = "C:/local/htw/simgen/tests/test-dashboard.html"
 $base = @('pytest', "--html-report=$out", '--title=simgen tests')
 $pyArgs = $base + $args
 $argv = ($pyArgs | ForEach-Object { "r'" + ($_ -replace "'","\'") + "'" }) -join ','
