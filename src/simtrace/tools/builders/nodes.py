@@ -9,7 +9,10 @@ Conventions (see architecture/node_tools.md):
   - reject duplicate ids,
   - always bind to `model.env`, never leak env/simpy objects in results,
   - in_edges/out_edges start empty — wiring happens later via `connect`,
-  - v1 delay/selection params accept constant int/float only.
+  - delay params (inter_arrival_time, processing_delay) accept a constant
+    int/float OR a distribution string ("uniform(a, b)", "normal(m, s)",
+    "gauss(m, s)", "exp(x)"); node_setup_time is constant-only,
+  - selection params accept a strategy string only.
 """
 
 from __future__ import annotations
@@ -20,13 +23,13 @@ from factorysimpy.nodes.sink import Sink
 from factorysimpy.nodes.source import Source
 from factorysimpy.nodes.splitter import Splitter
 
-from simgen.model import FactoryModel, get_model
-from simgen.tools.utils import require_number
+from simtrace.model import FactoryModel, get_model
+from simtrace.tools.utils import require_number, resolve_delay
 
 
 def create_source(
     id: str,
-    inter_arrival_time: float = 1.0,
+    inter_arrival_time: float | str = 1.0,
     flow_item_type: str = "item",
     item_length: float = 1,
     blocking: bool = False,
@@ -40,8 +43,11 @@ def create_source(
     A Source generates flow items and has no in_edges and exactly one out_edge
     (wired later). Args:
         id: unique node identifier.
-        inter_arrival_time: constant time between item generations. Must be
-            non-zero when `blocking=False`.
+        inter_arrival_time: time between item generations. Either a constant
+            (int/float) or a distribution string sampled each cycle:
+            "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean
+            = x). Samples are clamped to >= 0. Must be non-zero when
+            `blocking=False`.
         flow_item_type: "item" or "pallet".
         item_length: physical length assigned to each generated item; only
             used by conveyor edges (travel time = length/speed) and ignored by
@@ -60,7 +66,7 @@ def create_source(
     if model.has_node(id):
         raise ValueError(f"A node with id '{id}' already exists.")
 
-    require_number("inter_arrival_time", inter_arrival_time)
+    resolved_iat = resolve_delay("inter_arrival_time", inter_arrival_time)
     require_number("item_length", item_length)
     require_number("node_setup_time", node_setup_time)
     if flow_item_type not in ("item", "pallet"):
@@ -73,7 +79,7 @@ def create_source(
     node = Source(
         env=model.env,
         id=id,
-        inter_arrival_time=inter_arrival_time,
+        inter_arrival_time=resolved_iat,
         flow_item_type=flow_item_type,
         item_length=item_length,
         blocking=blocking,
@@ -140,7 +146,7 @@ def create_sink(
 def create_machine(
     id: str,
     work_capacity: int = 1,
-    processing_delay: float = 0,
+    processing_delay: float | str = 0,
     blocking: bool = True,
     in_edge_selection: str = "FIRST_AVAILABLE",
     out_edge_selection: str = "FIRST_AVAILABLE",
@@ -156,7 +162,10 @@ def create_machine(
         id: unique node identifier.
         work_capacity: number of items that can be processed simultaneously
             (one worker thread per item); must be a positive int.
-        processing_delay: constant time to process one item.
+        processing_delay: time to process one item. Constant (int/float) or a
+            distribution string sampled each cycle: "uniform(a, b)",
+            "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean = x). Samples are
+            clamped to >= 0.
         blocking: if True, wait for out_edge space; if False, discard when full.
         in_edge_selection: in-edge selection strategy, one of "FIRST_AVAILABLE",
             "RANDOM", "ROUND_ROBIN".
@@ -179,7 +188,7 @@ def create_machine(
     if work_capacity < 1:
         raise ValueError("work_capacity must be a positive int (>= 1).")
 
-    require_number("processing_delay", processing_delay)
+    resolved_delay = resolve_delay("processing_delay", processing_delay)
     require_number("node_setup_time", node_setup_time)
     if not isinstance(blocking, bool):
         raise ValueError("blocking must be a bool.")
@@ -193,7 +202,7 @@ def create_machine(
         id=id,
         node_setup_time=node_setup_time,
         work_capacity=work_capacity,
-        processing_delay=processing_delay,
+        processing_delay=resolved_delay,
         blocking=blocking,
         in_edge_selection=in_edge_selection,
         out_edge_selection=out_edge_selection,
@@ -219,7 +228,7 @@ def create_splitter(
     id: str,
     mode: str = "UNPACK",
     split_quantity: int | None = None,
-    processing_delay: float = 0,
+    processing_delay: float | str = 0,
     blocking: bool = True,
     in_edge_selection: str = "FIRST_AVAILABLE",
     out_edge_selection: str = "FIRST_AVAILABLE",
@@ -238,7 +247,10 @@ def create_splitter(
             container) or "SPLIT" (split the item into `split_quantity` items).
         split_quantity: number of items to split into; required when
             mode="SPLIT", ignored when mode="UNPACK". Must be a positive int.
-        processing_delay: constant time to process one item.
+        processing_delay: time to process one item. Constant (int/float) or a
+            distribution string sampled each cycle: "uniform(a, b)",
+            "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean = x). Samples are
+            clamped to >= 0.
         blocking: if True, wait for out_edge space; if False, discard when full.
         in_edge_selection: in-edge selection strategy, one of "FIRST_AVAILABLE",
             "RANDOM", "ROUND_ROBIN".
@@ -268,7 +280,7 @@ def create_splitter(
         if split_quantity < 1:
             raise ValueError("split_quantity must be a positive int (>= 1).")
 
-    require_number("processing_delay", processing_delay)
+    resolved_delay = resolve_delay("processing_delay", processing_delay)
     require_number("node_setup_time", node_setup_time)
     if not isinstance(blocking, bool):
         raise ValueError("blocking must be a bool.")
@@ -281,7 +293,7 @@ def create_splitter(
         env=model.env,
         id=id,
         node_setup_time=node_setup_time,
-        processing_delay=processing_delay,
+        processing_delay=resolved_delay,
         blocking=blocking,
         mode=mode,
         split_quantity=split_quantity,
@@ -309,7 +321,7 @@ def create_splitter(
 def create_combiner(
     id: str,
     target_quantity_of_each_item: list[int] | None = None,
-    processing_delay: float = 0,
+    processing_delay: float | str = 0,
     blocking: bool = True,
     out_edge_selection: str = "FIRST_AVAILABLE",
     node_setup_time: float = 0,
@@ -328,7 +340,10 @@ def create_combiner(
             pull from each in_edge per combine cycle (indexed by in_edge
             position; the first position is the pallet edge). Each entry must be
             a positive int. Defaults to [1].
-        processing_delay: constant time to process one combine cycle.
+        processing_delay: time to process one combine cycle. Constant
+            (int/float) or a distribution string sampled each cycle:
+            "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean
+            = x). Samples are clamped to >= 0.
         blocking: if True, wait for out_edge space; if False, discard when full.
         out_edge_selection: out-edge selection strategy, one of
             "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
@@ -361,7 +376,7 @@ def create_combiner(
                 f"(got {qty!r})."
             )
 
-    require_number("processing_delay", processing_delay)
+    resolved_delay = resolve_delay("processing_delay", processing_delay)
     require_number("node_setup_time", node_setup_time)
     if not isinstance(blocking, bool):
         raise ValueError("blocking must be a bool.")
@@ -373,7 +388,7 @@ def create_combiner(
         id=id,
         node_setup_time=node_setup_time,
         target_quantity_of_each_item=target_quantity_of_each_item,
-        processing_delay=processing_delay,
+        processing_delay=resolved_delay,
         blocking=blocking,
         out_edge_selection=out_edge_selection,
     )

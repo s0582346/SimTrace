@@ -1,7 +1,7 @@
 """Builders for FactorySimPy *Edge* instances.
 
 Each `create_*` function is a plain builder mirroring the node builders in
-`simgen.tools.nodes`: it validates its arguments, instantiates the FactorySimPy
+`simtrace.tools.nodes`: it validates its arguments, instantiates the FactorySimPy
 edge bound to the shared model environment, registers it, and returns a small
 JSON-serializable summary. The MCP server wraps these as tools; tests call them
 directly.
@@ -13,7 +13,9 @@ Conventions (see architecture/edge_tools.md):
   - reject duplicate ids (ids are global across nodes and edges),
   - src_node/dest_node start None — wiring happens later via `connect`,
   - edges have no node_setup_time (that param is node-only),
-  - v1 delay params accept constant int/float only.
+  - delay params (buffer delay, fleet delay/transit_delay) accept a constant
+    int/float OR a distribution string ("uniform(a, b)", "normal(m, s)",
+    "gauss(m, s)", "exp(x)").
 """
 
 from __future__ import annotations
@@ -24,19 +26,19 @@ from factorysimpy.edges.buffer import Buffer
 from factorysimpy.edges.continuous_conveyor import ConveyorBelt
 from factorysimpy.edges.fleet import Fleet
 
-from simgen.model import FactoryModel, get_model
-from simgen.tools.utils import (
-    require_number,
+from simtrace.model import FactoryModel, get_model
+from simtrace.tools.utils import (
     require_positive_int,
     require_positive_number,
     require_unique_id,
+    resolve_delay,
 )
 
 
 def create_buffer(
     id: str,
     capacity: int = 1,
-    delay: float = 0,
+    delay: float | str = 0,
     mode: str = "FIFO",
     *,
     model: FactoryModel | None = None,
@@ -49,7 +51,10 @@ def create_buffer(
     Args:
         id: unique edge identifier (unique across nodes and edges).
         capacity: max items the buffer can hold; must be a positive int.
-        delay: constant time after which a put item becomes available to get.
+        delay: time after which a put item becomes available to get. Constant
+            (int/float) or a distribution string sampled each cycle:
+            "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean
+            = x). Samples are clamped to >= 0.
         mode: "FIFO" (oldest item available first) or "LIFO" (newest first).
 
     Returns a summary dict echoing the stored parameters.
@@ -58,11 +63,13 @@ def create_buffer(
 
     require_unique_id(id, model)
     require_positive_int("capacity", capacity)
-    require_number("delay", delay)
+    resolved_delay = resolve_delay("delay", delay)
     if mode not in ("FIFO", "LIFO"):
         raise ValueError('mode must be "FIFO" or "LIFO".')
 
-    edge = Buffer(env=model.env, id=id, capacity=capacity, delay=delay, mode=mode)
+    edge = Buffer(
+        env=model.env, id=id, capacity=capacity, delay=resolved_delay, mode=mode
+    )
 
     model.add_edge(id, edge)
 
@@ -151,8 +158,8 @@ def create_conveyor(
 def create_fleet(
     id: str,
     capacity: int = 1,
-    delay: float = 1,
-    transit_delay: float = 0,
+    delay: float | str = 1,
+    transit_delay: float | str = 0,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -164,9 +171,11 @@ def create_fleet(
     Args:
         id: unique edge identifier (unique across nodes and edges).
         capacity: number of items moved per trip; must be a positive int.
-        delay: constant wait before the fleet departs if it hasn't filled to
-            capacity.
-        transit_delay: constant src->dest travel time.
+        delay: wait before the fleet departs if it hasn't filled to capacity.
+            Constant (int/float) or a distribution string sampled each cycle:
+            "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean
+            = x). Samples are clamped to >= 0.
+        transit_delay: src->dest travel time. Same forms as `delay`.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -174,15 +183,15 @@ def create_fleet(
 
     require_unique_id(id, model)
     require_positive_int("capacity", capacity)
-    require_number("delay", delay)
-    require_number("transit_delay", transit_delay)
+    resolved_delay = resolve_delay("delay", delay)
+    resolved_transit = resolve_delay("transit_delay", transit_delay)
 
     edge = Fleet(
         env=model.env,
         id=id,
         capacity=capacity,
-        delay=delay,
-        transit_delay=transit_delay,
+        delay=resolved_delay,
+        transit_delay=resolved_transit,
     )
 
     model.add_edge(id, edge)
