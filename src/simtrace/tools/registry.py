@@ -1,8 +1,8 @@
 """Central registration of MCP tools onto a FastMCP server.
 
 Each tool here is a thin wrapper that delegates to a plain function in
-`simgen.tools.builders` (create_*), `simgen.tools.simulation` (connect,
-get_model, reset_model, run_simulation), or `simgen.tools.validation`
+`simtrace.tools.builders` (create_*), `simtrace.tools.simulation` (connect,
+get_model, reset_model, run_simulation), or `simtrace.tools.validation`
 (verify_*) — those modules own the argument validation and the shared model.
 Every wrapper is decorated with `traced`, so each tool call becomes an
 OpenTelemetry span. As new tools land, register them in `register_tools`.
@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from simgen.tools import builders, simulation, validation
-from simgen.tools.telemetry import traced
+from simtrace.tools import builders, simulation, validation
+from simtrace.tools.telemetry import traced
 
 
 def register_tools(mcp: FastMCP) -> FastMCP:
@@ -23,7 +23,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     @traced
     def create_source(
         id: str,
-        inter_arrival_time: float = 1.0,
+        inter_arrival_time: float | str = 1.0,
         flow_item_type: str = "item",
         item_length: float = 1,
         blocking: bool = False,
@@ -37,8 +37,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
         Args:
             id: unique node identifier.
-            inter_arrival_time: constant time between item generations; must be
-                non-zero when blocking is False.
+            inter_arrival_time: time between item generations. Constant
+                (int/float) or a distribution string sampled each cycle:
+                "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)" (exp
+                mean = x); samples clamped to >= 0. Must be non-zero when
+                blocking is False.
             flow_item_type: "item" or "pallet".
             item_length: physical length assigned to each generated item;
                 only used by conveyor edges (travel time = length/speed) and
@@ -84,7 +87,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     def create_machine(
         id: str,
         work_capacity: int = 1,
-        processing_delay: float = 0,
+        processing_delay: float | str = 0,
         blocking: bool = True,
         in_edge_selection: str = "FIRST_AVAILABLE",
         out_edge_selection: str = "FIRST_AVAILABLE",
@@ -99,7 +102,10 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             id: unique node identifier.
             work_capacity: number of items processed simultaneously (one worker
                 thread per item); must be a positive int.
-            processing_delay: constant time to process one item.
+            processing_delay: time to process one item. Constant (int/float) or
+                a distribution string sampled each cycle: "uniform(a, b)",
+                "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean = x); samples
+                clamped to >= 0.
             blocking: if True, wait for out_edge space; if False, discard when
                 full.
             in_edge_selection: in-edge selection strategy, one of
@@ -124,7 +130,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         id: str,
         mode: str = "UNPACK",
         split_quantity: int | None = None,
-        processing_delay: float = 0,
+        processing_delay: float | str = 0,
         blocking: bool = True,
         in_edge_selection: str = "FIRST_AVAILABLE",
         out_edge_selection: str = "FIRST_AVAILABLE",
@@ -141,7 +147,10 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 container) or "SPLIT" (split into `split_quantity` items).
             split_quantity: number of items to split into; required when
                 mode="SPLIT", ignored when mode="UNPACK". Must be a positive int.
-            processing_delay: constant time to process one item.
+            processing_delay: time to process one item. Constant (int/float) or
+                a distribution string sampled each cycle: "uniform(a, b)",
+                "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean = x); samples
+                clamped to >= 0.
             blocking: if True, wait for out_edge space; if False, discard when
                 full.
             in_edge_selection: in-edge selection strategy, one of
@@ -166,7 +175,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     def create_combiner(
         id: str,
         target_quantity_of_each_item: list[int] | None = None,
-        processing_delay: float = 0,
+        processing_delay: float | str = 0,
         blocking: bool = True,
         out_edge_selection: str = "FIRST_AVAILABLE",
         node_setup_time: float = 0,
@@ -184,7 +193,10 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 pull from each in_edge per combine cycle (indexed by in_edge
                 position; the first position is the pallet edge). Each entry must
                 be a positive int. Defaults to [1].
-            processing_delay: constant time to process one combine cycle.
+            processing_delay: time to process one combine cycle. Constant
+                (int/float) or a distribution string sampled each cycle:
+                "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)" (exp
+                mean = x); samples clamped to >= 0.
             blocking: if True, wait for out_edge space; if False, discard when
                 full.
             out_edge_selection: out-edge selection strategy, one of
@@ -205,7 +217,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     def create_buffer(
         id: str,
         capacity: int = 1,
-        delay: float = 0,
+        delay: float | str = 0,
         mode: str = "FIFO",
     ) -> dict:
         """Create a Buffer edge: a FIFO/LIFO queue between two nodes.
@@ -217,7 +229,10 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         Args:
             id: unique edge identifier (unique across nodes and edges).
             capacity: max items the buffer can hold; must be a positive int.
-            delay: constant time after which a put item becomes available to get.
+            delay: time after which a put item becomes available to get.
+                Constant (int/float) or a distribution string sampled each
+                cycle: "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)"
+                (exp mean = x); samples clamped to >= 0.
             mode: "FIFO" (oldest item available first) or "LIFO" (newest first).
         """
         return builders.create_buffer(
@@ -265,8 +280,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     def create_fleet(
         id: str,
         capacity: int = 1,
-        delay: float = 1,
-        transit_delay: float = 0,
+        delay: float | str = 1,
+        transit_delay: float | str = 0,
     ) -> dict:
         """Create a Fleet edge: transporters (AGVs) moving items between nodes.
 
@@ -276,9 +291,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         Args:
             id: unique edge identifier (unique across nodes and edges).
             capacity: number of items moved per trip; must be a positive int.
-            delay: constant wait before the fleet departs if it hasn't filled to
-                capacity.
-            transit_delay: constant src->dest travel time.
+            delay: wait before the fleet departs if it hasn't filled to
+                capacity. Constant (int/float) or a distribution string sampled
+                each cycle: "uniform(a, b)", "normal(m, s)", "gauss(m, s)",
+                "exp(x)" (exp mean = x); samples clamped to >= 0.
+            transit_delay: src->dest travel time. Same forms as `delay`.
         """
         return builders.create_fleet(
             id=id,

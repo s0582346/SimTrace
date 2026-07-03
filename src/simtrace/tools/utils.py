@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Union
+
+from simtrace.tools.distributions import parse_delay
 
 if TYPE_CHECKING:
-    from simgen.model import FactoryModel
+    from simtrace.model import FactoryModel
 
 
 def require_number(name: str, value: object) -> None:
@@ -30,6 +32,27 @@ def require_number(name: str, value: object) -> None:
             f"{name} must be a constant int or float (got {value!r}). "
             "Generators/callables are a later extension."
         )
+
+
+def resolve_delay(
+    name: str, value: object
+) -> Union[int, float, Callable[[], float]]:
+    """Validate + resolve a delay param that may be constant OR stochastic.
+
+    Unlike `require_number` (constant-only), this accepts either a plain
+    int/float or a distribution string (`uniform(a, b)`, `normal(m, s)`,
+    `gauss(m, s)`, `exp(x)`) and returns what FactorySimPy should receive: the
+    number unchanged, or a zero-arg sampler callable for a distribution string.
+
+    The builder should pass the *return value* to the FactorySimPy constructor
+    but echo the *original* `value` in its summary dict — a callable is not
+    JSON-serializable, whereas the spec string is.
+
+    Raises:
+        ValueError: if `value` is neither a number nor a well-formed
+            distribution string (delegated to `parse_delay`).
+    """
+    return parse_delay(name, value)
 
 
 def require_positive_int(name: str, value: object) -> None:
