@@ -21,6 +21,7 @@ class FactoryModel:
         self.nodes: dict[str, object] = {}
         self.edges: dict[str, object] = {}
         self.events: list[dict] = [] # Item-flow events captured from the most recent run_simulation
+        self.item_paths: dict[str, list[str]] = {} # Per-item node sequence accumulated live during the most recent run
 
     def has_node(self, node_id: str) -> bool:
         return node_id in self.nodes
