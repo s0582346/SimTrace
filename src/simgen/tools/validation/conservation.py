@@ -1,17 +1,8 @@
-"""Post-run verification tools that check a *completed* simulation.
+"""Post-run conservation check: reconcile every generated item.
 
-Where `simulation.run_simulation` executes the model, these tools inspect what
-happened. `verify_conservation` answers "are all generated items accounted for?"
-by a mass-balance over the nodes' and edges' ground-truth item counters.
-
-This is distinct from the static graph checks a future `validate_model` will do
-*before* a run (cardinality, orphans): conservation is a *dynamic* check — it
-needs a run to have happened.
-
-Conventions (mirrors the other tool modules):
-  - fail with friendly ValueErrors, not raw KeyErrors,
-  - never expose env/simpy objects in results,
-  - operate on the shared session model unless a `model` is supplied.
+`verify_conservation` mass-balances the nodes' and edges' ground-truth item
+counters to check that every generated item is accounted for. See
+`architecture/conservation.md` for what the check means and why it holds.
 """
 
 from __future__ import annotations
@@ -19,41 +10,8 @@ from __future__ import annotations
 from simgen.model import FactoryModel
 from simgen.model import get_model as get_session_model
 
-
-# --- conservation (mass balance) -----------------------------------------
-#
-# Every physical item a Source generates must, when the run stops, be in exactly
-# one place: delivered to a Sink, still sitting in an edge (buffer/conveyor/fleet
-# WIP), still inside a Machine being processed, or discarded (dropped when a
-# non-blocking node found its out_edge full). Nothing else can happen to it. So
-#
-#     generated  ==  received  +  in_edges  +  in_machines  +  discarded
-#
-# is an identity that must hold to the item; any shortfall means items vanished
-# without a trace (a modelling or engine bug), any surplus means items appeared
-# from nowhere. This is the check the flowchart calls for: reconcile the stats
-# against what was generated.
-#
-# The three left-hand terms below come straight from ground-truth counters and
-# live edge levels. `in_machines` is the one term with no direct counter, so it
-# is *derived* as the residual — but only after we account for the count-changing
-# nodes (see `_PACKING_NODES`), so a real leak can't hide inside the residual.
-
-# Nodes that emit a different number of physical items than they consume:
-#   - Splitter unpacks one packed pallet into the N items inside it (plus the
-#     empty pallet), so it EMITS MORE physical items than it pulled in.
-#   - Combiner packs items pulled from several in_edges into one pallet, so it
-#     EMITS FEWER — the packed items ride downstream nested inside the pallet.
-# Their `num_item_processed` counts physical items *emitted*, so the net change
-# in item count across the whole line is (emitted - consumed) at these nodes.
-# We can read `emitted` from the counter but not `consumed`, so the presence of
-# any such node makes the strict global identity inexact; we report it rather
-# than silently absorbing the difference into the machine residual.
 _PACKING_NODES = frozenset({"Splitter", "Combiner"})
 
-# Per node type, the stats field holding physical items that LEFT the node for a
-# downstream edge (a Source emits what it generated; workers emit what they
-# processed). Sinks are terminal (they receive, never emit) so they have none.
 _EMITTED_COUNTER: dict[str, str] = {
     "Source": "num_item_generated",
     "Machine": "num_item_processed",
@@ -102,25 +60,30 @@ def _edge_level(edge: object) -> int:
 def verify_conservation(*, model: FactoryModel | None = None) -> dict:
     """Reconcile every generated item against where it ended up.
 
-    Performs a mass balance over the last run: the number of items all Sources
-    generated must equal the items delivered to Sinks, plus items still in
-    transit inside edges (buffer/conveyor/fleet WIP), plus items still being
-    processed inside Machines, plus items discarded. If the two sides differ,
-    items were lost (or spuriously created) — the alarm the flowchart calls for.
+    Mass-balances the last run against the identity
+
+        generated == received + in_edges + in_machines + discarded
+
+    where `generated`, `received`, `discarded`, and `in_edges` are read from
+    ground-truth counters and live edge levels, and `in_machines` is derived as
+    the residual (there is no machine-WIP counter):
+
+        in_machines = generated - received - in_edges - discarded
 
     Requires a prior `run_simulation` (a model whose clock is still at 0 raises).
 
-    The machine-WIP term has no direct counter; it is derived as the residual
-    that closes the balance, so on a clean run `balanced` is always True and
-    `in_machines` tells you how many items were mid-process when the clock
-    stopped. The residual is trustworthy only when it can't be hiding a real
-    leak, which is why count-changing nodes are handled explicitly: a Splitter
-    or Combiner emits a different number of physical items than it consumed (it
-    un/re-packs pallets), and its consumed-count isn't recorded. When the model
-    contains any such node the strict identity can't be closed from counters
-    alone; `balanced` is then reported as None and `exact` is False, with the
-    offending nodes listed in `packing_nodes`. For the common source→machine→
-    sink lines (no packing) the check is exact.
+    Because `in_machines` is the residual, it closes the identity by
+    construction. On a consistent run it is >= 0, and
+    `balanced` is True. A negative residual means `received + in_edges +
+    discarded` already exceeds `generated` — items appeared from nowhere — and
+    `balanced` is False.
+
+    A Splitter or Combiner emits a different number of physical items than it
+    consumed (it un/re-packs pallets) and its consumed-count is not recorded, so
+    the residual conflates machine WIP with that unknown delta. When the model
+    contains any such node, `in_machines` and `balanced` are reported as None,
+    `exact` is False, and the offending node ids are listed in `packing_nodes`.
+    For lines without a Splitter or Combiner the check is exact.
 
     Returns a summary dict:
         {
@@ -182,25 +145,21 @@ def verify_conservation(*, model: FactoryModel | None = None) -> dict:
     by_edge = {edge_id: _edge_level(edge) for edge_id, edge in model.edges.items()}
     in_edges = sum(by_edge.values())
 
-    # Items still inside machines are the ones that entered the transformation
-    # stages but have neither been emitted downstream, discarded, delivered, nor
-    # left sitting in an edge. Deriving it as the residual makes the identity
-    # close by construction on a clean, packing-free run; the value itself is
-    # the useful output (how much WIP was mid-process at the cutoff).
+    # No counter for machine WIP, so derive it as the residual: whatever wasn't
+    # delivered, left in an edge, or discarded is still mid-process at the cutoff.
     in_machines = generated - received - in_edges - discarded
 
     exact = not packing_nodes
     if exact:
         # No count-changing nodes: the residual is genuine machine WIP and can't
         # go negative on a consistent run. A negative value means items appeared
-        # from nowhere (surplus) — surface it instead of clamping.
+        # from nowhere — surface it instead of clamping.
         balanced: bool | None = in_machines >= 0
         in_machines_reported = in_machines
     else:
         # A splitter/combiner changed the physical item count by an amount we
         # can't read from counters, so the residual conflates real WIP with the
-        # packing delta. Don't claim a verdict or a machine-WIP figure we can't
-        # stand behind.
+        # packing delta.
         balanced = None
         in_machines_reported = None
 
