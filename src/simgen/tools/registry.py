@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from simgen.tools import edges, nodes, simulation, validation
+from simgen.tools import edges, nodes, simulation
 from simgen.tools.telemetry import traced
+from simgen.tools.validation import validation
 
 
 def register_tools(mcp: FastMCP) -> FastMCP:
@@ -351,5 +352,18 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         `packing_nodes`.
         """
         return validation.verify_conservation()
+
+    @mcp.tool()
+    @traced
+    def verify_item_flow() -> dict:
+        """Check that every delivered item followed a proper route.
+
+        For each item that reached a sink in the last run, replays its captured
+        node path and checks it is a connected route along wired edges ending at a
+        sink. Clean items are counted in `passed`; an item that took a hop with no
+        wired edge behind it is listed in `improper` with the offending hop. Only delivered items are judged (stuck/discarded items are
+        verify_conservation's concern). Requires a prior run_simulation.
+        """
+        return validation.verify_item_flow()
 
     return mcp
