@@ -8,8 +8,8 @@ from factorysimpy.nodes.sink import Sink
 from factorysimpy.nodes.source import Source
 from factorysimpy.nodes.splitter import Splitter
 
-from simgen.model import FactoryModel
-from simgen.tools.builders import (
+from simtrace.model import FactoryModel
+from simtrace.tools.builders import (
     create_combiner,
     create_machine,
     create_sink,
@@ -75,18 +75,30 @@ def test_blocking_allows_zero_interarrival(model):
     assert summary["blocking"] is True
 
 
-def test_generator_interarrival_rejected_in_v1(model):
+def test_generator_interarrival_still_rejected(model):
+    # Distribution strings are supported; generators are not (can't cross the
+    # MCP JSON boundary) and still raise.
     def gen():
         while True:
             yield 1.0
 
-    with pytest.raises(ValueError, match="constant int or float"):
+    with pytest.raises(ValueError, match="distribution string"):
         create_source("src1", inter_arrival_time=gen(), model=model)
 
 
 def test_bool_interarrival_rejected(model):
-    with pytest.raises(ValueError, match="constant int or float"):
+    with pytest.raises(ValueError, match="distribution string"):
         create_source("src1", inter_arrival_time=True, model=model)
+
+
+def test_source_accepts_distribution_string(model):
+    summary = create_source(
+        "src1", inter_arrival_time="exp(5)", model=model
+    )
+    # Summary echoes the original spec (JSON-serializable), while the node got
+    # a callable sampler.
+    assert summary["inter_arrival_time"] == "exp(5)"
+    assert callable(model.nodes["src1"].inter_arrival_time)
 
 
 def test_bad_flow_item_type_rejected(model):
@@ -206,13 +218,19 @@ def test_machine_bool_work_capacity_rejected(model):
         create_machine("m1", work_capacity=True, model=model)
 
 
-def test_machine_generator_processing_delay_rejected_in_v1(model):
+def test_machine_generator_processing_delay_still_rejected(model):
     def gen():
         while True:
             yield 1.0
 
-    with pytest.raises(ValueError, match="constant int or float"):
+    with pytest.raises(ValueError, match="distribution string"):
         create_machine("m1", processing_delay=gen(), model=model)
+
+
+def test_machine_accepts_distribution_string(model):
+    summary = create_machine("m1", processing_delay="uniform(2, 8)", model=model)
+    assert summary["processing_delay"] == "uniform(2, 8)"
+    assert callable(model.nodes["m1"].processing_delay)
 
 
 def test_machine_non_blocking_accepted(model):
@@ -300,13 +318,19 @@ def test_splitter_duplicate_id_rejected(model):
         create_splitter("sp1", model=model)
 
 
-def test_splitter_generator_processing_delay_rejected_in_v1(model):
+def test_splitter_generator_processing_delay_still_rejected(model):
     def gen():
         while True:
             yield 1.0
 
-    with pytest.raises(ValueError, match="constant int or float"):
+    with pytest.raises(ValueError, match="distribution string"):
         create_splitter("sp1", processing_delay=gen(), model=model)
+
+
+def test_splitter_accepts_distribution_string(model):
+    summary = create_splitter("sp1", processing_delay="normal(5, 1)", model=model)
+    assert summary["processing_delay"] == "normal(5, 1)"
+    assert callable(model.nodes["sp1"].processing_delay)
 
 
 def test_create_combiner_registers_node(model):
@@ -378,10 +402,16 @@ def test_combiner_bool_quantity_entry_rejected(model):
         )
 
 
-def test_combiner_generator_processing_delay_rejected_in_v1(model):
+def test_combiner_generator_processing_delay_still_rejected(model):
     def gen():
         while True:
             yield 1.0
 
-    with pytest.raises(ValueError, match="constant int or float"):
+    with pytest.raises(ValueError, match="distribution string"):
         create_combiner("cb1", processing_delay=gen(), model=model)
+
+
+def test_combiner_accepts_distribution_string(model):
+    summary = create_combiner("cb1", processing_delay="exp(3)", model=model)
+    assert summary["processing_delay"] == "exp(3)"
+    assert callable(model.nodes["cb1"].processing_delay)

@@ -6,13 +6,13 @@ from factorysimpy.edges.buffer import Buffer
 from factorysimpy.edges.continuous_conveyor import ConveyorBelt
 from factorysimpy.edges.fleet import Fleet
 
-from simgen.model import FactoryModel
-from simgen.tools.builders import (
+from simtrace.model import FactoryModel
+from simtrace.tools.builders import (
     create_buffer,
     create_conveyor,
     create_fleet,
 )
-from simgen.tools.builders import create_source
+from simtrace.tools.builders import create_source
 
 
 @pytest.fixture
@@ -85,13 +85,19 @@ def test_buffer_bad_mode_rejected(model):
         create_buffer("buf1", mode="STACK", model=model)
 
 
-def test_buffer_generator_delay_rejected_in_v1(model):
+def test_buffer_generator_delay_still_rejected(model):
     def gen():
         while True:
             yield 1.0
 
-    with pytest.raises(ValueError, match="constant int or float"):
+    with pytest.raises(ValueError, match="distribution string"):
         create_buffer("buf1", delay=gen(), model=model)
+
+
+def test_buffer_accepts_distribution_string(model):
+    summary = create_buffer("buf1", delay="uniform(1, 3)", model=model)
+    assert summary["delay"] == "uniform(1, 3)"
+    assert callable(model.edges["buf1"].delay)
 
 
 # --- Conveyor -------------------------------------------------------------
@@ -227,13 +233,21 @@ def test_fleet_bool_capacity_rejected(model):
         create_fleet("flt1", capacity=True, model=model)
 
 
-def test_fleet_generator_transit_delay_rejected_in_v1(model):
+def test_fleet_generator_transit_delay_still_rejected(model):
     def gen():
         while True:
             yield 1.0
 
-    with pytest.raises(ValueError, match="constant int or float"):
+    with pytest.raises(ValueError, match="distribution string"):
         create_fleet("flt1", transit_delay=gen(), model=model)
+
+
+def test_fleet_accepts_distribution_strings(model):
+    summary = create_fleet(
+        "flt1", delay="exp(2)", transit_delay="uniform(1, 4)", model=model
+    )
+    assert summary["delay"] == "exp(2)"
+    assert summary["transit_delay"] == "uniform(1, 4)"
 
 
 # --- Shared id namespace --------------------------------------------------
