@@ -21,8 +21,8 @@ factory model step by step (create nodes, create edges, wire them together, and
 run the simulation), with **every tool call traced** via OpenTelemetry.
 
 The server speaks the open [MCP](https://modelcontextprotocol.io) protocol over
-stdio and is **client-agnostic**, any MCP client e.g. Claude Desktop,
-OpenCode, other agent frameworks, or a custom client can drive it.
+stdio and is **client-agnostic**: any MCP client (a desktop assistant, an
+agent framework, or a custom client) can drive it.
 
 ## Features
 
@@ -53,6 +53,8 @@ Design notes live in [`architecture/`](architecture/) (`node_tools.md`,
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
+git clone https://github.com/s0582346/SimTrace.git
+cd SimTrace
 uv sync
 ```
 
@@ -73,11 +75,18 @@ The server speaks MCP over stdio, so it is normally launched by an MCP client
 
 ## Connecting an MCP client
 
-The server is a standard stdio MCP server. Point any client at the project's venv
-Python. Replace `/path/to/simtrace` below with your clone's absolute path (on
-Windows, e.g. `C:\\Users\\you\\simtrace` with `\\.venv\\Scripts\\python.exe`).
+The server is a standard stdio MCP server. Configure your MCP client to launch
+it with the project's venv Python:
 
-**Claude Desktop:** add to `claude_desktop_config.json`, then fully restart:
+```
+/path/to/simtrace/.venv/bin/python -m simtrace.server
+```
+
+Replace `/path/to/simtrace` with your clone's absolute path (on Windows, e.g.
+`C:\\Users\\you\\simtrace` with `\\.venv\\Scripts\\python.exe`).
+
+Many clients share the same JSON config format, adding the server under an
+`mcpServers` key:
 
 ```json
 {
@@ -90,13 +99,8 @@ Windows, e.g. `C:\\Users\\you\\simtrace` with `\\.venv\\Scripts\\python.exe`).
 }
 ```
 
-**Claude Code:** from the cloned repo:
-
-```bash
-claude mcp add simtrace -- ./.venv/bin/python -m simtrace.server
-```
-
-The SimTrace tools then appear in the client (check with `/mcp` in Claude Code).
+Once configured, the SimTrace tools appear in the client. See your client's
+documentation for where its config lives and how to reload it.
 
 ## Observability (OpenTelemetry + Jaeger)
 
