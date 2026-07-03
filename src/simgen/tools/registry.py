@@ -10,9 +10,8 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from simgen.tools import edges, nodes, simulation
+from simgen.tools import edges, nodes, simulation, validation
 from simgen.tools.telemetry import traced
-from simgen.tools.validation import validation
 
 
 def register_tools(mcp: FastMCP) -> FastMCP:

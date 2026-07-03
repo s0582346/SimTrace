@@ -1,23 +1,20 @@
-"""Lifecycle tools that operate on the assembled model as a whole.
+"""Graph tools: wire the assembled components and inspect the wiring.
 
-Where the `create_*` builders in `simgen.tools.nodes` / `simgen.tools.edges`
-populate the session model with components, these tools wire those components
-together (`connect`), inspect the current graph (`get_model`), and run the
-simulation (`run_simulation`).
+`connect` appends an edge to its src node's out_edges and its dest node's
+in_edges; `get_model` returns a read-only snapshot of the resulting graph. Both
+operate on the shared session model unless a `model` is supplied.
 
 Conventions (see architecture/simulation_tools.md):
   - fail with friendly ValueErrors on unknown ids, not raw KeyErrors,
-  - FactorySimPy prints to stdout during connect/run; that is suppressed here so
-    it can't corrupt the MCP stdio (JSON-RPC) channel.
+  - FactorySimPy prints to stdout during connect; that is suppressed here so it
+    can't corrupt the MCP stdio (JSON-RPC) channel.
 """
 
 from __future__ import annotations
 
 from simgen.model import FactoryModel
 from simgen.model import get_model as get_session_model
-from simgen.model import reset_model as reset_session_model
 from simgen.tools.telemetry import traced_stdout
-from simgen.tools.utils import require_positive_number
 
 
 def _edge_count(value: object) -> int:
@@ -101,72 +98,3 @@ def get_model(*, model: FactoryModel | None = None) -> dict:
         for edge_id, edge in model.edges.items()
     ]
     return {"nodes": nodes, "edges": edges}
-
-
-def reset_model() -> dict:
-    """Discard the current session graph and start a fresh, empty one.
-
-    Replaces the session model with a brand-new one: every node and edge is
-    dropped and the simulation clock restarts at 0 (a new `simpy.Environment`).
-    Use this to recover from a dirty session — leftover components from earlier
-    work, an orphaned node that can't be wired or deleted individually, or a
-    clock that has already advanced past the `until` you want to run to.
-
-    Unlike the other lifecycle tools, this always operates on the shared session
-    model (there is nothing to reset in a caller-supplied one).
-
-    Returns a summary of what was cleared and the reset clock.
-    """
-    old = get_session_model()
-    cleared_nodes = len(old.nodes)
-    cleared_edges = len(old.edges)
-
-    reset_session_model()
-
-    return {
-        "cleared_nodes": cleared_nodes,
-        "cleared_edges": cleared_edges,
-        "now": 0,
-    }
-
-
-def run_simulation(
-    until: float,
-    *,
-    model: FactoryModel | None = None,
-) -> dict:
-    """Run the simulation up to time `until` and return a stats summary.
-
-    This is where FactorySimPy's scheduled `behaviour()` processes actually
-    execute, so any unmet edge-cardinality requirement (e.g. a Source with no
-    out_edge) surfaces here as an AssertionError. Run `validate_model` first to
-    catch those as friendly errors.
-    Args:
-        until: simulation end time; must be a positive number.
-
-    Returns a summary dict with the end time and per-node/edge stats.
-    """
-    model = model if model is not None else get_session_model()
-
-    require_positive_number("until", until)
-
-    # Capture this run's item-flow events and per-item node paths onto the model for the validation tools
-    model.events.clear()
-    model.item_paths.clear()
-    with traced_stdout(collector=model.events, paths=model.item_paths):
-        model.env.run(until=until)
-
-    nodes = {
-        node_id: getattr(node, "stats", None)
-        for node_id, node in model.nodes.items()
-    }
-    edges = {
-        edge_id: getattr(edge, "stats", None)
-        for edge_id, edge in model.edges.items()
-    }
-    return {
-        "until": until,
-        "now": model.env.now,
-        "nodes": nodes,
-        "edges": edges,
-    }
