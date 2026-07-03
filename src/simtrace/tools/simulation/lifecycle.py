@@ -13,11 +13,11 @@ Conventions (see architecture/simulation_tools.md):
 
 from __future__ import annotations
 
-from simgen.model import FactoryModel
-from simgen.model import get_model as get_session_model
-from simgen.model import reset_model as reset_session_model
-from simgen.tools.telemetry import traced_stdout
-from simgen.tools.utils import require_positive_number
+from simtrace.model import FactoryModel
+from simtrace.model import get_model as get_session_model
+from simtrace.model import reset_model as reset_session_model
+from simtrace.tools.telemetry import traced_stdout
+from simtrace.tools.utils import require_positive_number
 
 
 def reset_model() -> dict:

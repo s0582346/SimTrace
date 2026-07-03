@@ -1,7 +1,9 @@
 [project]
-name = "simgen-agent"
+name = "simtrace"
 version = "0.1.0"
-description = "Traceable, tool-building DES agent for SimPy models, driven by the Claude API over MCP."
+description = "Traceable, tool-building DES toolkit for SimPy models, exposed over MCP."
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
@@ -23,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-simgen = "simgen.cli:main"
+simtrace = "simtrace.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

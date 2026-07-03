@@ -65,4 +65,4 @@ item is stuck or merely in progress is a question about *how many* items ended u
 where, which is exactly what the conservation check answers. `validation_item_flow` judges the *shape* of a completed journey.
 
 *The concept behind the `verify_item_flow` check in
-`src/simgen/tools/validation.py`.*
+`src/simtrace/tools/validation.py`.*

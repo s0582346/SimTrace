@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 from opentelemetry.trace import StatusCode
 
-from simgen.tools.telemetry import traced
+from simtrace.tools.telemetry import traced
 
 
 @pytest.fixture(scope="module")

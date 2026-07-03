@@ -7,8 +7,8 @@ counters to check that every generated item is accounted for. See
 
 from __future__ import annotations
 
-from simgen.model import FactoryModel
-from simgen.model import get_model as get_session_model
+from simtrace.model import FactoryModel
+from simtrace.model import get_model as get_session_model
 
 _PACKING_NODES = frozenset({"Splitter", "Combiner"})
 

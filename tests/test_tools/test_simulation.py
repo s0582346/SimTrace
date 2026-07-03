@@ -4,11 +4,11 @@ import json
 
 import pytest
 
-from simgen import model as model_module
-from simgen.model import FactoryModel
-from simgen.tools.builders import create_buffer
-from simgen.tools.builders import create_sink, create_source
-from simgen.tools.simulation import connect, get_model, reset_model, run_simulation
+from simtrace import model as model_module
+from simtrace.model import FactoryModel
+from simtrace.tools.builders import create_buffer
+from simtrace.tools.builders import create_sink, create_source
+from simtrace.tools.simulation import connect, get_model, reset_model, run_simulation
 
 
 @pytest.fixture

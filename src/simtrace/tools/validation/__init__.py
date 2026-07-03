@@ -10,13 +10,13 @@ happened, each in its own submodule with its own helpers:
 
 Both are *dynamic* checks (they need a run to have happened), distinct from the
 static graph checks a future `validate_model` will do *before* a run. This
-package re-exports both so `from simgen.tools.validation import verify_*` and
+package re-exports both so `from simtrace.tools.validation import verify_*` and
 `validation.verify_*` keep working as a single tool surface.
 """
 
 from __future__ import annotations
 
-from simgen.tools.validation.conservation import verify_conservation
-from simgen.tools.validation.item_flow import verify_item_flow
+from simtrace.tools.validation.conservation import verify_conservation
+from simtrace.tools.validation.item_flow import verify_item_flow
 
 __all__ = ["verify_conservation", "verify_item_flow"]

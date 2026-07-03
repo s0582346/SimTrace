@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from simgen.model import FactoryModel
-from simgen.model import get_model as get_session_model
+from simtrace.model import FactoryModel
+from simtrace.model import get_model as get_session_model
 
 
 def _wired_adjacency(model: FactoryModel) -> dict[str, set[str]]:

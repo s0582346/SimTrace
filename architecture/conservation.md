@@ -108,4 +108,4 @@ answer.
 ---
 
 *The concept behind the `verify_conservation` check in
-`src/simgen/tools/validation.py`.*
+`src/simtrace/tools/validation.py`.*

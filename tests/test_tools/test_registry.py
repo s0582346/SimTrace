@@ -4,7 +4,7 @@ import asyncio
 
 from mcp.server.fastmcp import FastMCP
 
-from simgen.tools.registry import register_tools
+from simtrace.tools.registry import register_tools
 
 
 def test_register_tools_exposes_create_source():

@@ -12,9 +12,9 @@ Conventions (see architecture/simulation_tools.md):
 
 from __future__ import annotations
 
-from simgen.model import FactoryModel
-from simgen.model import get_model as get_session_model
-from simgen.tools.telemetry import traced_stdout
+from simtrace.model import FactoryModel
+from simtrace.model import get_model as get_session_model
+from simtrace.tools.telemetry import traced_stdout
 
 
 def _edge_count(value: object) -> int:

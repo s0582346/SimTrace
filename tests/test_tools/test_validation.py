@@ -5,16 +5,16 @@ import json
 
 import pytest
 
-from simgen.model import FactoryModel
-from simgen.tools.builders import create_buffer
-from simgen.tools.builders import (
+from simtrace.model import FactoryModel
+from simtrace.tools.builders import create_buffer
+from simtrace.tools.builders import (
     create_combiner,
     create_machine,
     create_sink,
     create_source,
 )
-from simgen.tools.simulation import connect, run_simulation
-from simgen.tools.validation import verify_conservation, verify_item_flow
+from simtrace.tools.simulation import connect, run_simulation
+from simtrace.tools.validation import verify_conservation, verify_item_flow
 
 
 @pytest.fixture

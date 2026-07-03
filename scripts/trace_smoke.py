@@ -7,7 +7,7 @@ collector before the process exits.
 Usage:
     docker compose up -d                 # start Jaeger first
     uv run python scripts/trace_smoke.py
-    # open http://localhost:16686 -> service "simgen"
+    # open http://localhost:16686 -> service "simtrace"
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ import asyncio
 
 from opentelemetry import trace
 
-from simgen.server import mcp
-from simgen.tools.telemetry import configure_telemetry
+from simtrace.server import mcp
+from simtrace.tools.telemetry import configure_telemetry
 
 
 async def _build_and_run() -> None:
@@ -39,7 +39,7 @@ def main() -> None:
     asyncio.run(_build_and_run())
     # BatchSpanProcessor batches; flush so spans export before we exit.
     trace.get_tracer_provider().force_flush()
-    print("Done. Open http://localhost:16686 and pick service 'simgen'.")
+    print("Done. Open http://localhost:16686 and pick service 'simtrace'.")
 
 
 if __name__ == "__main__":

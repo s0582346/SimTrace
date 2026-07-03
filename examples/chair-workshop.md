@@ -1,7 +1,7 @@
 # Example: chair workshop
 
 A realistic, domain-language prompt — no FactorySimPy/tool vocabulary — for
-testing how an MCP client maps a real problem onto the simgen tools.
+testing how an MCP client maps a real problem onto the simtrace tools.
 
 ## Prompt
 

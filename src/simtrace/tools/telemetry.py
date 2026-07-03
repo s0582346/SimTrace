@@ -30,7 +30,7 @@ from opentelemetry.sdk.trace import SpanLimits, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Status, StatusCode
 
-tracer = trace.get_tracer("simgen.tools")
+tracer = trace.get_tracer("simtrace.tools")
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -249,7 +249,7 @@ def traced_stdout(
 
 
 def configure_telemetry(
-    service_name: str = "simgen",
+    service_name: str = "simtrace",
     endpoint: str | None = None,
     span_event_limit: int = 2048,
 ) -> None:
