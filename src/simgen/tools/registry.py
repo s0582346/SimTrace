@@ -1,8 +1,10 @@
 """Central registration of MCP tools onto a FastMCP server.
 
-Each tool here is a thin wrapper that delegates to a plain builder in
-`simgen.tools.nodes`/`edges`/`simulation` (which own validation and the shared
-model). Every wrapper is decorated with `traced`, so each tool call becomes an
+Each tool here is a thin wrapper that delegates to a plain function in
+`simgen.tools.builders` (create_*), `simgen.tools.simulation` (connect,
+get_model, reset_model, run_simulation), or `simgen.tools.validation`
+(verify_*) — those modules own the argument validation and the shared model.
+Every wrapper is decorated with `traced`, so each tool call becomes an
 OpenTelemetry span. As new tools land, register them in `register_tools`.
 """
 
@@ -10,7 +12,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from simgen.tools import edges, nodes, simulation, validation
+from simgen.tools import builders, simulation, validation
 from simgen.tools.telemetry import traced
 
 
@@ -47,7 +49,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
             node_setup_time: constant initial setup delay.
         """
-        return nodes.create_source(
+        return builders.create_source(
             id=id,
             inter_arrival_time=inter_arrival_time,
             flow_item_type=flow_item_type,
@@ -72,7 +74,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             id: unique node identifier.
             node_setup_time: constant initial setup delay.
         """
-        return nodes.create_sink(
+        return builders.create_sink(
             id=id,
             node_setup_time=node_setup_time,
         )
@@ -106,7 +108,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
             node_setup_time: constant initial setup delay.
         """
-        return nodes.create_machine(
+        return builders.create_machine(
             id=id,
             work_capacity=work_capacity,
             processing_delay=processing_delay,
@@ -148,7 +150,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
             node_setup_time: constant initial setup delay.
         """
-        return nodes.create_splitter(
+        return builders.create_splitter(
             id=id,
             mode=mode,
             split_quantity=split_quantity,
@@ -189,7 +191,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
             node_setup_time: constant initial setup delay.
         """
-        return nodes.create_combiner(
+        return builders.create_combiner(
             id=id,
             target_quantity_of_each_item=target_quantity_of_each_item,
             processing_delay=processing_delay,
@@ -218,7 +220,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             delay: constant time after which a put item becomes available to get.
             mode: "FIFO" (oldest item available first) or "LIFO" (newest first).
         """
-        return edges.create_buffer(
+        return builders.create_buffer(
             id=id,
             capacity=capacity,
             delay=delay,
@@ -250,7 +252,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             accumulating: if True, items bunch up when the belt stalls; if False,
                 the belt blocks.
         """
-        return edges.create_conveyor(
+        return builders.create_conveyor(
             id=id,
             conveyor_length=conveyor_length,
             speed=speed,
@@ -278,7 +280,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 capacity.
             transit_delay: constant src->dest travel time.
         """
-        return edges.create_fleet(
+        return builders.create_fleet(
             id=id,
             capacity=capacity,
             delay=delay,
