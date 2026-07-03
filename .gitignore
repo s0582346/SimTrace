@@ -23,6 +23,11 @@ data/results/
 data/traces/
 *.log
 
+# Test report artifacts (regenerated on every run by test-dashboard.ps1)
+tests/output.json
+tests/test-dashboard.html
+tests/archive/
+
 # IDE
 .vscode/
 .idea/
