@@ -7,12 +7,12 @@ from factorysimpy.edges.continuous_conveyor import ConveyorBelt
 from factorysimpy.edges.fleet import Fleet
 
 from simgen.model import FactoryModel
-from simgen.tools.edges import (
+from simgen.tools.builders import (
     create_buffer,
     create_conveyor,
     create_fleet,
 )
-from simgen.tools.nodes import create_source
+from simgen.tools.builders import create_source
 
 
 @pytest.fixture

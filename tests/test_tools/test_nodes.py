@@ -9,7 +9,7 @@ from factorysimpy.nodes.source import Source
 from factorysimpy.nodes.splitter import Splitter
 
 from simgen.model import FactoryModel
-from simgen.tools.nodes import (
+from simgen.tools.builders import (
     create_combiner,
     create_machine,
     create_sink,

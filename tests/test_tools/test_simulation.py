@@ -6,8 +6,8 @@ import pytest
 
 from simgen import model as model_module
 from simgen.model import FactoryModel
-from simgen.tools.edges import create_buffer
-from simgen.tools.nodes import create_sink, create_source
+from simgen.tools.builders import create_buffer
+from simgen.tools.builders import create_sink, create_source
 from simgen.tools.simulation import connect, get_model, reset_model, run_simulation
 
 
