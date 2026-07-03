@@ -42,7 +42,7 @@ agent framework, or a custom client) can drive it.
 | Nodes (active) | `create_source`, `create_sink`, `create_machine`, `create_splitter`, `create_combiner` | `simtrace.tools.builders.nodes` |
 | Edges (passive) | `create_buffer`, `create_conveyor`, `create_fleet` | `simtrace.tools.builders.edges` |
 | Lifecycle | `connect`, `get_model`, `reset_model`, `run_simulation` | `simtrace.tools.simulation` |
-| Verification (post-run) | `verify_conservation`, `verify_item_flow` | `simtrace.tools.validation` |
+| Verification | `verify_conservation`, `verify_item_flow` | `simtrace.tools.validation` |
 
 Design notes live in [`architecture/`](architecture/) (`node_tools.md`,
 `edge_tools.md`, `simulation_tools.md`, `observability.md`). Worked models live in
