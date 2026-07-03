@@ -136,10 +136,34 @@ def _classify(message: str) -> tuple[str, dict[str, Any]] | None:
     return ("other", {}) if _KEEP_UNMATCHED else None
 
 
+# The sink narrates a received item by printing the object, whose repr is
+# `Item(<id>)` / `Pallet(<id>, items=N)`, whereas every upstream event prints the
+# bare `item.id`. Strip that wrapper so a delivered item's `received` event keys
+# to the same id as its upstream `put` events; anything already bare (or None)
+# passes through unchanged.
+_ITEM_WRAPPER = re.compile(r"^(?:Item|Pallet)\((?P<id>[^,)]+)")
+
+
+def _norm_item(item: str | None) -> str | None:
+    if item is None:
+        return None
+    match = _ITEM_WRAPPER.match(item)
+    return match.group("id") if match else item
+
+
+# The node sequence of an item is reconstructed from exactly these event kinds:
+# a `put` fires once per hop as the item LEAVES a node (its `node` field is that
+# node), and `received` marks arrival at the sink. That pair enumerates the path
+# gap-free under any edge-selection; other kinds (process_start/get/…) would only
+# duplicate nodes, so they are not appended.
+_PATH_EVENT_KINDS = frozenset({"put", "received"})
+
+
 def _add_sim_event(
     span: trace.Span,
     line: str,
     collector: list[dict[str, Any]] | None = None,
+    paths: dict[str, list[str]] | None = None,
 ) -> None:
     """Attach one captured FactorySimPy line to `span` as a typed event.
 
@@ -153,6 +177,12 @@ def _add_sim_event(
     as a flat dict (`kind` plus the `sim.*` entities with their prefix stripped:
     node/item/edge/state/time/message) for post-run analysis by the validation
     tools.
+
+    When `paths` is given, `put`/`received` events also extend the per-item node
+    sequence live (keyed by the normalized item id): this is the item-flow trail
+    verify_item_flow validates against the wired graph. Because events arrive in
+    causal order, appending as they stream reconstructs each item's path with no
+    later sort needed.
     """
     parsed = _SIM_LINE.match(line)
     time = float(parsed.group("time")) if parsed else None
@@ -172,10 +202,17 @@ def _add_sim_event(
         event.update((name[len("sim."):], value) for name, value in attrs.items())
         collector.append(event)
 
+    if paths is not None and kind in _PATH_EVENT_KINDS:
+        item = _norm_item(attrs.get("sim.item"))
+        node = attrs.get("sim.node")
+        if item is not None and node is not None:
+            paths.setdefault(item, []).append(node)
+
 
 @contextlib.contextmanager
 def traced_stdout(
     collector: list[dict[str, Any]] | None = None,
+    paths: dict[str, list[str]] | None = None,
 ) -> Iterator[None]:
     """Redirect FactorySimPy's stdout into events on the current span.
 
@@ -194,6 +231,10 @@ def traced_stdout(
     Pass `collector` (a list) to also capture each classified event as a flat
     dict for post-run analysis by the validation tools. This is independent of
     telemetry: the events are collected whether or not a real span is active.
+
+    Pass `paths` (a dict) to also accumulate each item's node sequence from the
+    `put`/`received` events as they stream — the per-item flow trail that
+    verify_item_flow reads. Also independent of telemetry.
     """
     buf = io.StringIO()
     try:
@@ -204,7 +245,7 @@ def traced_stdout(
         for line in buf.getvalue().splitlines():
             stripped = line.strip()
             if stripped:
-                _add_sim_event(span, stripped, collector)
+                _add_sim_event(span, stripped, collector, paths)
 
 
 def configure_telemetry(
