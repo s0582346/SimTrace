@@ -28,7 +28,7 @@ graph structure:
   with a capacity, not a machine.
 - N identical machines, one shared queue ("any free machine takes the next
   item"): one machine with work_capacity=N. N machines with their own queues:
-  N machine nodes, each fed by its own buffer from the upstream node; set the
+  N machine nodes, each fed by its own buffer from the upstream node. Set the
   upstream node's out_edge_selection="ROUND_ROBIN" to spread items evenly.
 - Pass seed to run_simulation for a reproducible run; distinct seeds give
   independent replications. After a run, use verify_conservation and

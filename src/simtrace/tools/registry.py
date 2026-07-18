@@ -33,7 +33,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         """Create a Source node that generates flow items into the model.
 
         A Source has no in_edges and exactly one out_edge (wired later via
-        connect).
+        connect). Items cannot carry a type or attributes: to model a product
+        mix, create one Source per type and divide the overall mean
+        inter-arrival time by the type's mix fraction (e.g. arrivals every
+        8 min with a 60/40 mix -> two Sources with "exp(13.33)" and "exp(20)"
+        — never the fraction itself as the exp argument).
 
         Args:
             id: unique node identifier.
@@ -313,6 +317,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         node's in_edges. An edge connects exactly one src to one dest; a node
         accumulates several in/out edges by being the endpoint of several
         connect calls.
+
+        Connect order matters at shared destinations: a node with
+        in_edge_selection="FIRST_AVAILABLE" drains its in-edges in the order
+        they were connected, so wire the higher-priority stream's edge first
+        to give it non-preemptive priority.
 
         Args:
             edge_id: id of an existing edge (Buffer/Conveyor/Fleet).

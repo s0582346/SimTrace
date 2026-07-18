@@ -41,7 +41,10 @@ def create_source(
     """Create a Source node and register it in the shared model.
 
     A Source generates flow items and has no in_edges and exactly one out_edge
-    (wired later). Args:
+    (wired later). Items cannot carry a type or attributes: a product mix is
+    modeled as one Source per type, with the overall mean inter-arrival time
+    divided by the type's mix fraction.
+    Args:
         id: unique node identifier.
         inter_arrival_time: time between item generations. Either a constant
             (int/float) or a distribution string sampled each cycle:

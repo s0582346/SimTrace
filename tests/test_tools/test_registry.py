@@ -150,3 +150,28 @@ def test_register_tools_exposes_run_simulation():
     assert "run_simulation" in by_name
     schema = by_name["run_simulation"].inputSchema
     assert schema["required"] == ["until"]
+
+
+def test_server_exposes_modeling_instructions():
+    # The session-level guide is the only channel telling an MCP client the
+    # structural idioms (one Source per type, connect order = priority, ...).
+    from simtrace.server import mcp as server_mcp
+
+    instructions = server_mcp.instructions
+    assert instructions
+    assert "one Source per type" in instructions
+    assert "connect order" in instructions
+    assert "NO type/attributes" in instructions
+
+
+def test_tool_descriptions_carry_decision_point_hints():
+    mcp = FastMCP("test")
+    register_tools(mcp)
+
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+
+    # create_source: product mix -> one Source per type, mean / fraction.
+    assert "one Source per type" in by_name["create_source"].description
+    # connect: wiring order at a shared station encodes priority.
+    assert "Connect order matters" in by_name["connect"].description

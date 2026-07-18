@@ -34,7 +34,10 @@ def connect(
     Resolves all three ids, then calls the edge's `connect`, which appends the
     edge to the source node's out_edges and the destination node's in_edges. An
     edge connects exactly one src to one dest; a node accumulates several in/out
-    edges by being the endpoint of several connect calls.
+    edges by being the endpoint of several connect calls. Connect order matters
+    at shared destinations: with in_edge_selection="FIRST_AVAILABLE" a node
+    drains its in-edges in connect order, so the earlier-wired stream has
+    non-preemptive priority.
     Args:
         edge_id: id of an existing edge (Buffer/Conveyor/Fleet).
         src_id: id of the source (upstream) node.
