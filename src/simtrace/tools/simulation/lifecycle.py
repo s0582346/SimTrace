@@ -13,6 +13,8 @@ Conventions (see architecture/simulation_tools.md):
 
 from __future__ import annotations
 
+import random
+
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
 from simtrace.model import reset_model as reset_session_model
@@ -49,6 +51,7 @@ def reset_model() -> dict:
 
 def run_simulation(
     until: float,
+    seed: int | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -60,12 +63,25 @@ def run_simulation(
     catch those as friendly errors.
     Args:
         until: simulation end time; must be a positive number.
+        seed: optional RNG seed. All stochastic draws (distribution-string
+            samplers and RANDOM edge selection) come from Python's global
+            `random` module, so seeding it here makes the run deterministic:
+            the same seed on a freshly built identical model reproduces the
+            run exactly. Note it seeds process-global state.
 
-    Returns a summary dict with the end time and per-node/edge stats.
+    Returns a summary dict with the end time, the seed, and per-node/edge stats.
     """
     model = model if model is not None else get_session_model()
 
     require_positive_number("until", until)
+    # bool is an int subclass; exclude it so True/False aren't accepted as a seed.
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
+        raise ValueError(f"seed must be an int or None (got {seed!r}).")
+    if seed is not None:
+        # Global module on purpose: the vendored FactorySimPy draws from the
+        # global functions too (e.g. RANDOM edge selection), and a private
+        # Random instance would leave those unseeded.
+        random.seed(seed)
 
     # Capture this run's item-flow events and per-item node paths onto the model for the validation tools
     model.events.clear()
@@ -83,6 +99,7 @@ def run_simulation(
     }
     return {
         "until": until,
+        "seed": seed,
         "now": model.env.now,
         "nodes": nodes,
         "edges": edges,

@@ -345,7 +345,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
-    def run_simulation(until: float) -> dict:
+    def run_simulation(until: float, seed: int | None = None) -> dict:
         """Run the simulation up to time `until` and return a stats summary.
 
         This executes the model: any unmet edge-cardinality requirement (e.g. a
@@ -353,8 +353,12 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
         Args:
             until: simulation end time; must be a positive number.
+            seed: optional RNG seed. With a seed, the same freshly built model
+                reproduces the run exactly (identical draws, routing, stats);
+                omit it for a fresh random run. Use distinct seeds to sample
+                several reproducible replications of a stochastic model.
         """
-        return simulation.run_simulation(until=until)
+        return simulation.run_simulation(until=until, seed=seed)
 
     @mcp.tool()
     @traced

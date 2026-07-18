@@ -145,6 +145,55 @@ def test_run_simulation_unconnected_source_raises(model):
         run_simulation(5, model=model)
 
 
+# --- run_simulation seeding ------------------------------------------------
+
+
+def _stochastic_line() -> FactoryModel:
+    """A freshly built line whose arrivals are random draws."""
+    m = FactoryModel()
+    create_source("src", inter_arrival_time="exp(1)", blocking=True, model=m)
+    create_sink("snk", model=m)
+    create_buffer("buf", capacity=4, model=m)
+    connect("buf", "src", "snk", model=m)
+    return m
+
+
+def test_run_simulation_same_seed_reproduces_run():
+    first = run_simulation(50, seed=42, model=_stochastic_line())
+    second = run_simulation(50, seed=42, model=_stochastic_line())
+    assert first == second
+    assert first["nodes"]["snk"]["num_item_received"] > 0
+
+
+def test_run_simulation_different_seeds_diverge():
+    first = run_simulation(50, seed=1, model=_stochastic_line())
+    second = run_simulation(50, seed=2, model=_stochastic_line())
+    # Arrival draws differ, so the sinks' receive counts/stats differ.
+    assert first["nodes"] != second["nodes"]
+
+
+def test_run_simulation_seed_echoed_in_result(wired):
+    connect("buf", "src", "snk", model=wired)
+    result = run_simulation(10, seed=7, model=wired)
+    assert result["seed"] == 7
+
+
+def test_run_simulation_seed_defaults_to_none(wired):
+    connect("buf", "src", "snk", model=wired)
+    result = run_simulation(10, model=wired)
+    assert result["seed"] is None
+
+
+def test_run_simulation_bool_seed_rejected(wired):
+    with pytest.raises(ValueError, match="seed must be an int"):
+        run_simulation(10, seed=True, model=wired)
+
+
+def test_run_simulation_float_seed_rejected(wired):
+    with pytest.raises(ValueError, match="seed must be an int"):
+        run_simulation(10, seed=1.5, model=wired)
+
+
 # --- reset_model ----------------------------------------------------------
 
 
