@@ -22,6 +22,7 @@ class FactoryModel:
         self.edges: dict[str, object] = {}
         self.events: list[dict] = [] # Item-flow events captured from the most recent run_simulation
         self.item_paths: dict[str, list[str]] = {} # Per-item node sequence accumulated live during the most recent run
+        self.spec: list[dict] = [] # Ordered build log ({"op", "kwargs"} per create_*/connect, raw args); replications replay it to rebuild the graph (see rebuild.build_from_spec)
 
     def has_node(self, node_id: str) -> bool:
         return node_id in self.nodes
@@ -36,6 +37,14 @@ class FactoryModel:
         can resolve any endpoint by a single, unambiguous id.
         """
         return component_id in self.nodes or component_id in self.edges
+
+    def record(self, op: str, kwargs: dict) -> None:
+        """Append one build step to the spec.
+
+        `kwargs` holds the caller's raw args (the `"exp(5)"` string, not the
+        sampler) and no `model` — the replayer supplies a fresh one.
+        """
+        self.spec.append({"op": op, "kwargs": dict(kwargs)})
 
     def add_node(self, node_id: str, node: object) -> None:
         if self.has_id(node_id):

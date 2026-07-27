@@ -72,6 +72,10 @@ def create_buffer(
     )
 
     model.add_edge(id, edge)
+    model.record(
+        "create_buffer",
+        {"id": id, "capacity": capacity, "delay": delay, "mode": mode},
+    )
 
     return {
         "id": id,
@@ -141,6 +145,16 @@ def create_conveyor(
     )
 
     model.add_edge(id, edge)
+    model.record(
+        "create_conveyor",
+        {
+            "id": id,
+            "conveyor_length": conveyor_length,
+            "speed": speed,
+            "item_length": item_length,
+            "accumulating": accumulating,
+        },
+    )
 
     return {
         "id": id,
@@ -195,6 +209,15 @@ def create_fleet(
     )
 
     model.add_edge(id, edge)
+    model.record(
+        "create_fleet",
+        {
+            "id": id,
+            "capacity": capacity,
+            "delay": delay,
+            "transit_delay": transit_delay,
+        },
+    )
 
     return {
         "id": id,

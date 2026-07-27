@@ -66,6 +66,12 @@ def connect(
     with traced_stdout():
         edge.connect(src, dest)
 
+    # Call order is load-bearing: "FIRST_AVAILABLE" drains in-edges in connect
+    # order, so replaying out of order would silently change routing priority.
+    model.record(
+        "connect", {"edge_id": edge_id, "src_id": src_id, "dest_id": dest_id}
+    )
+
     return {
         "edge": edge_id,
         "type": type(edge).__name__,

@@ -93,6 +93,18 @@ def create_source(
     node.node_setup_time = node_setup_time
 
     model.add_node(id, node)
+    model.record(
+        "create_source",
+        {
+            "id": id,
+            "inter_arrival_time": inter_arrival_time,
+            "flow_item_type": flow_item_type,
+            "item_length": item_length,
+            "blocking": blocking,
+            "out_edge_selection": out_edge_selection,
+            "node_setup_time": node_setup_time,
+        },
+    )
 
     return {
         "id": id,
@@ -136,6 +148,7 @@ def create_sink(
     node = Sink(env=model.env, id=id, node_setup_time=node_setup_time)
 
     model.add_node(id, node)
+    model.record("create_sink", {"id": id, "node_setup_time": node_setup_time})
 
     return {
         "id": id,
@@ -212,6 +225,18 @@ def create_machine(
     )
 
     model.add_node(id, node)
+    model.record(
+        "create_machine",
+        {
+            "id": id,
+            "work_capacity": work_capacity,
+            "processing_delay": processing_delay,
+            "blocking": blocking,
+            "in_edge_selection": in_edge_selection,
+            "out_edge_selection": out_edge_selection,
+            "node_setup_time": node_setup_time,
+        },
+    )
 
     return {
         "id": id,
@@ -305,6 +330,19 @@ def create_splitter(
     )
 
     model.add_node(id, node)
+    model.record(
+        "create_splitter",
+        {
+            "id": id,
+            "mode": mode,
+            "split_quantity": split_quantity,
+            "processing_delay": processing_delay,
+            "blocking": blocking,
+            "in_edge_selection": in_edge_selection,
+            "out_edge_selection": out_edge_selection,
+            "node_setup_time": node_setup_time,
+        },
+    )
 
     return {
         "id": id,
@@ -397,6 +435,18 @@ def create_combiner(
     )
 
     model.add_node(id, node)
+    model.record(
+        "create_combiner",
+        {
+            "id": id,
+            # Copy so a later mutation of the caller's list can't rewrite history.
+            "target_quantity_of_each_item": list(target_quantity_of_each_item),
+            "processing_delay": processing_delay,
+            "blocking": blocking,
+            "out_edge_selection": out_edge_selection,
+            "node_setup_time": node_setup_time,
+        },
+    )
 
     return {
         "id": id,
