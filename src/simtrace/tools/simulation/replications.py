@@ -4,13 +4,12 @@ A single `run_simulation` is one sample of a random model; to say anything
 defensible about throughput or utilization you need several independent
 replications and a confidence interval. `run_replications` drives that loop:
 
-  1. Validate the replication count (2..100).
+  1. Validate the replication count (2..100) and snapshot the source model's
+     build spec.
   2. For each replication i, set a deterministic, well-separated seed
-     (`random_seed_base + i * 1000`), call `random.seed(...)`, build a *fresh*
-     model via the caller's `build_model()` factory, and run it once. The
-     i * 1000 spacing keeps per-run seed streams far apart so replications are
-     effectively independent; a fresh model per run means no SimPy state bleeds
-     between replications.
+     (`random_seed_base + i * SEED_STRIDE`), call `random.seed(...)`, rebuild a
+     *fresh* model from the spec, and run it once. The stride keeps per-run seed
+     streams far apart so replications are effectively independent.
   3. Sort outcomes: successful runs are tagged with `_replication_info`
      (replication number, seed, timestamp) and collected; a run that raises is
      recorded separately with its seed, and the loop keeps going (one bad run
@@ -21,22 +20,23 @@ replications and a confidence interval. `run_replications` drives that loop:
      `ReplicationAnalyzer` and return its analysis alongside the industry
      summary and the failure log.
 
-`build_model` is a zero-arg callable returning a freshly assembled
-`FactoryModel` (e.g. a helper that runs the create_*/connect calls on a new
-model). It is intentionally a callable rather than a config dict: this repo has
-no config->model builder yet, so a factory is the honest way to get genuinely
-independent models per replication. Once a config->model builder exists, a thin
-MCP wrapper can adapt a JSON config into such a factory.
+Only the source model's `spec` is read (the session model's by default). Its
+`env`, nodes, edges, `events` and `item_paths` are never touched, so its clock
+and the last `run_simulation`'s stats stay intact for the `verify_*` tools. The
+spec is copied once up front, so edits to the session model made while a batch
+is in flight cannot change what later replications build.
 """
 
 from __future__ import annotations
 
 import random
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List
 
 from simtrace.model import FactoryModel
+from simtrace.model import get_model as get_session_model
 from simtrace.tools.simulation.lifecycle import run_simulation
+from simtrace.tools.simulation.rebuild import build_from_spec
 from simtrace.tools.simulation.replication_analysis import ReplicationAnalyzer
 from simtrace.tools.utils import require_positive_number
 
@@ -71,24 +71,24 @@ def _flatten_run(result: Dict[str, Any]) -> Dict[str, float]:
 
 
 def run_replications(
-    build_model: Callable[[], FactoryModel],
     until: float,
     replications: int,
     random_seed_base: int = 0,
+    *,
+    model: FactoryModel | None = None,
 ) -> Dict[str, Any]:
-    """Run `replications` independent runs of a fresh model and analyze them.
+    """Run `replications` independent runs of the assembled model and analyze them.
 
     Args:
-        build_model: zero-arg factory returning a freshly assembled, unrun
-            `FactoryModel`. Called once per replication so no SimPy state is
-            shared between runs.
         until: simulation end time for each run; must be a positive number.
         replications: number of independent runs; must be an int in
-            [2, 100]. Fewer than 2 leaves nothing to do statistics on; more
-            than 100 is disallowed to bound the work per call.
+            [2, 100].
         random_seed_base: base RNG seed. Replication i uses
-            `random_seed_base + i * 1000`, so the whole batch is reproducible
-            from this one number and the per-run streams stay well separated.
+            `random_seed_base + i * SEED_STRIDE`, so the whole batch is
+            reproducible from this one number and the per-run streams stay well
+            separated.
+        model: the model whose build spec to replicate; defaults to the session
+            model.
 
     Returns:
         A dict with:
@@ -100,8 +100,8 @@ def run_replications(
 
     Raises:
         ValueError: if `until` is not a positive number, `replications` is not
-            an int in [2, 100], `random_seed_base` is not an int, or fewer than
-            two runs succeeded.
+            an int in [2, 100], `random_seed_base` is not an int, the model has
+            no recorded build steps, or fewer than two runs succeeded.
     """
     require_positive_number("until", until)
 
@@ -119,6 +119,16 @@ def run_replications(
             f"random_seed_base must be an int (got {random_seed_base!r})."
         )
 
+    source = model if model is not None else get_session_model()
+
+    # Snapshot the spec now so later edits to the source model can't affect this batch half-way through.
+    spec = list(source.spec)
+    if not spec:
+        raise ValueError(
+            "The model is empty: create nodes and edges (and connect them) "
+            "before running replications."
+        )
+
     successful: List[Dict[str, Any]] = []
     failures: List[Dict[str, Any]] = []
 
@@ -128,8 +138,10 @@ def run_replications(
         # run_simulation run the model without reseeding again.
         random.seed(seed)
         try:
-            model = build_model()
-            result = run_simulation(until, seed=None, model=model)
+            # A fresh model per run: re-running the source model would raise on
+            # its second call (until <= clock) and share stats across runs.
+            replica = build_from_spec(spec)
+            result = run_simulation(until, seed=None, model=replica)
         except Exception as exc:  # one bad run doesn't kill the batch
             failures.append(
                 {"replication": i, "seed": seed, "error": f"{type(exc).__name__}: {exc}"}
