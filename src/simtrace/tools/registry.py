@@ -2,8 +2,9 @@
 
 Each tool here is a thin wrapper that delegates to a plain function in
 `simtrace.tools.builders` (create_*), `simtrace.tools.simulation` (connect,
-get_model, reset_model, run_simulation), or `simtrace.tools.validation`
-(verify_*) — those modules own the argument validation and the shared model.
+get_model, reset_model, run_simulation, run_replications), or
+`simtrace.tools.validation` (verify_*) — those modules own the argument
+validation and the shared model.
 Every wrapper is decorated with `traced`, so each tool call becomes an
 OpenTelemetry span. As new tools land, register them in `register_tools`.
 """
@@ -368,6 +369,50 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 several reproducible replications of a stochastic model.
         """
         return simulation.run_simulation(until=until, seed=seed)
+
+    @mcp.tool()
+    @traced
+    def run_replications(
+        until: float,
+        replications: int = 10,
+        random_seed_base: int = 0,
+    ) -> dict:
+        """Run the current model many times and report means with confidence intervals.
+
+        Use this instead of `run_simulation` to state a result for a stochastic
+        model (any distribution string, or RANDOM selection).
+
+        Each replication rebuilds the graph and runs it from a clock at 0, so
+        the runs are independent. The current model is only read — the `verify_*`
+        tools still refer to your last `run_simulation`. Build the model with
+        the create_*/connect tools first.
+
+        Args:
+            until: simulation end time for each run; must be a positive number.
+            replications: number of independent runs; an int in [2, 20]. 10 is
+                a reasonable default; more narrows the confidence intervals.
+            random_seed_base: base RNG seed. Replication i uses
+                `random_seed_base + i * 1000`, so the whole batch replays
+                exactly from this one number.
+
+        Returns a dict with `summary` (a formatted text report — read this
+        first), `analysis` (per-metric mean/CI, keyed `node_id.stat_name`),
+        `requested_replications`, `successful_replications`, and `failures`
+        (any runs that raised, with their seeds).
+        """
+        # Tighter than the Python API's 100: one tool call runs `replications`
+        # full simulations, and `until` is unbounded.
+        if isinstance(replications, bool) or not isinstance(replications, int):
+            raise ValueError(f"replications must be an int (got {replications!r}).")
+        if not 2 <= replications <= 20:
+            raise ValueError(
+                f"replications must be between 2 and 20 (got {replications})."
+            )
+        return simulation.run_replications(
+            until=until,
+            replications=replications,
+            random_seed_base=random_seed_base,
+        )
 
     @mcp.tool()
     @traced
