@@ -7,6 +7,7 @@ replays them into a fresh model with a clock at 0.
 
 import pytest
 
+import simtrace.model as model_module
 from simtrace.model import FactoryModel
 from simtrace.tools.builders import (
     create_buffer,
@@ -15,7 +16,12 @@ from simtrace.tools.builders import (
     create_sink,
     create_source,
 )
-from simtrace.tools.simulation import build_from_spec, connect, run_simulation
+from simtrace.tools.simulation import (
+    build_from_spec,
+    connect,
+    reset_model,
+    run_simulation,
+)
 
 
 def _build_line(model: FactoryModel) -> FactoryModel:
@@ -35,6 +41,32 @@ def _build_line(model: FactoryModel) -> FactoryModel:
 
 def test_spec_starts_empty():
     assert FactoryModel().spec == []
+
+
+@pytest.fixture
+def fresh_session():
+    """Give the test a clean module-level session model, then restore it."""
+    saved = model_module._model
+    model_module._model = FactoryModel()
+    try:
+        yield model_module._model
+    finally:
+        model_module._model = saved
+
+
+def test_reset_model_clears_the_spec(fresh_session):
+    """The spec must not outlive the graph it describes.
+
+    reset_model swaps in a new FactoryModel, so a stale spec can't survive to
+    rebuild components the session no longer has.
+    """
+    _build_line(model_module.get_model())
+    assert model_module.get_model().spec
+
+    reset_model()
+
+    assert model_module.get_model().spec == []
+    assert model_module.get_model().nodes == {}
 
 
 def test_spec_records_every_step_in_order():
