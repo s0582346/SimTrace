@@ -1,7 +1,7 @@
 """Tests for run_replications and the ReplicationAnalyzer.
 
 run_replications replicates an already-assembled model by replaying its recorded
-build spec once per run; here that model is a small stochastic line so the runs
+build spec once per run. Here that model is a small stochastic line so the runs
 actually differ across seeds.
 """
 
