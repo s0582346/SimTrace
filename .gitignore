@@ -41,3 +41,7 @@ architecture/*
 !architecture/conservation.md
 !architecture/item_flow.md
 schemas/
+
+examples/*
+
+.firecrawl/

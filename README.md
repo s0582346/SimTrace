@@ -2,7 +2,7 @@
 
 # SimTrace
 
-![SimTrace cover](cover.png)
+![SimTrace cover](assets/cover.png)
 
 **A traceable, tool-building discrete-event simulation toolkit for SimPy models, exposed over MCP.**
 
