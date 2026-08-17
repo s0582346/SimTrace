@@ -21,7 +21,7 @@ import contextlib
 import functools
 import io
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from typing import Any, TypeVar
 
 from opentelemetry import trace
@@ -101,6 +101,16 @@ _EVENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("put", re.compile(r"^(?P<node>\S+) puts (?P<item>\S+) item into (?P<edge>\S+)")),
     ("put", re.compile(r"^(?P<node>\S+) puts item into (?P<edge>\S+)")),
     ("put", re.compile(r"^(?P<node>\S+) (?P<item>\S+) pushed to buffer (?P<edge>\S+)")),
+    # The edge's own view of the same hand-off. A non-blocking Source narrates its
+    # put WITHOUT the item id ("src puts item into B1"), so for that one hop these
+    # are the only lines naming which item moved. Buffers and fleets share the
+    # first wording; conveyors use the second, where "on belt" is required to
+    # avoid also matching the class-level "Conveyor:put:" line that carries no
+    # edge id. `build_item_paths` drops any edge id the model doesn't know.
+    ("edge_put", re.compile(
+        r"^(?P<edge>\S+) is putting item (?P<item>\S+) with delay")),
+    ("edge_put", re.compile(
+        r"^(?P<edge>\S+):put: putting item (?P<item>\S+) on belt")),
     ("process_start", re.compile(
         r"^(?P<node>\S+) worker started processing item (?P<item>\S+)")),
     ("process_end", re.compile(
@@ -151,19 +161,95 @@ def _norm_item(item: str | None) -> str | None:
     return match.group("id") if match else item
 
 
-# The node sequence of an item is reconstructed from exactly these event kinds:
-# a `put` fires once per hop as the item LEAVES a node (its `node` field is that
-# node), and `received` marks arrival at the sink. That pair enumerates the path
-# gap-free under any edge-selection; other kinds (process_start/get/…) would only
-# duplicate nodes, so they are not appended.
-_PATH_EVENT_KINDS = frozenset({"put", "received"})
+def build_item_paths(
+    events: Sequence[dict[str, Any]],
+    edge_ids: Collection[str] = (),
+) -> dict[str, list[str]]:
+    """Reconstruct each item's trail through the plant from a run's events.
+
+    A trail alternates the things an item actually touched, in travel order:
+
+        ["src", "B1", "M1", "C1", "M2", "B2", "snk"]
+
+    Node ids and edge ids share one namespace (`FactoryModel.has_id`), so no
+    element is ambiguous and a reader can tell node from edge by looking the id
+    up in `model.nodes` / `model.edges`.
+
+    A `put` event names the node the item left *and* the edge it left into, which
+    is one whole hop. `received` closes the trail at the sink. A **non-blocking
+    Source** is the one hop narrated without an item id, so there the edge's own
+    `edge_put` line is the only witness: such a trail begins with an edge id
+    rather than a node, and the reader resolves the Source from that edge's
+    `src_node` (see `verify_item_flow`).
+
+    Both lines describe every hop and the edge's comes first, so an `edge_put` is
+    held *pending* and only placed if no `put` follows to name the node behind it.
+    Holding one per item (rather than pre-indexing the pairs) keeps this right when
+    an item crosses the same edge twice in a rework loop.
+
+    Pass `edge_ids` (the model's wired edge ids) so an `edge_put` line whose id is
+    not a real edge cannot enter a trail. Pure function over already-collected
+    events: no simulation needed to test it.
+    """
+    trails: dict[str, list[str]] = {}
+    pending: dict[str, str] = {}
+
+    def emit(item: str, element: str) -> None:
+        trail = trails.setdefault(item, [])
+        # An item narrated twice at the same place is not a move.
+        if not trail or trail[-1] != element:
+            trail.append(element)
+
+    def flush(item: str) -> None:
+        """Place a held edge, i.e. one no `put` came along to attribute."""
+        edge = pending.pop(item, None)
+        if edge is not None:
+            emit(item, edge)
+
+    for event in events:
+        kind = event.get("kind")
+        item = _norm_item(event.get("item"))
+        if item is None:
+            continue
+
+        if kind == "edge_put":
+            edge = event.get("edge")
+            if edge not in edge_ids:
+                continue
+            flush(item)
+            pending[item] = edge
+        elif kind == "put":
+            node = event.get("node")
+            if node is None:
+                continue
+            edge = event.get("edge")
+            if pending.get(item) == edge:
+                # This is the node behind the held edge: the node goes first.
+                del pending[item]
+            else:
+                flush(item)
+            emit(item, node)
+            if edge is not None:
+                emit(item, edge)
+        else:
+            # received / process_start / get / …: nothing more is coming to
+            # attribute a held edge, so it stands on its own.
+            flush(item)
+            if kind == "received":
+                node = event.get("node")
+                if node is not None:
+                    emit(item, node)
+
+    for item in list(pending):
+        flush(item)
+
+    return trails
 
 
 def _add_sim_event(
     span: trace.Span,
     line: str,
     collector: list[dict[str, Any]] | None = None,
-    paths: dict[str, list[str]] | None = None,
 ) -> None:
     """Attach one captured FactorySimPy line to `span` as a typed event.
 
@@ -176,13 +262,8 @@ def _add_sim_event(
     When `collector` is given, the same classified event is also appended to it
     as a flat dict (`kind` plus the `sim.*` entities with their prefix stripped:
     node/item/edge/state/time/message) for post-run analysis by the validation
-    tools.
-
-    When `paths` is given, `put`/`received` events also extend the per-item node
-    sequence live (keyed by the normalized item id): this is the item-flow trail
-    verify_item_flow validates against the wired graph. Because events arrive in
-    causal order, appending as they stream reconstructs each item's path with no
-    later sort needed.
+    tools. Per-item trails are built from that collection afterwards by
+    `build_item_paths`, not accumulated here.
     """
     parsed = _SIM_LINE.match(line)
     time = float(parsed.group("time")) if parsed else None
@@ -202,17 +283,10 @@ def _add_sim_event(
         event.update((name[len("sim."):], value) for name, value in attrs.items())
         collector.append(event)
 
-    if paths is not None and kind in _PATH_EVENT_KINDS:
-        item = _norm_item(attrs.get("sim.item"))
-        node = attrs.get("sim.node")
-        if item is not None and node is not None:
-            paths.setdefault(item, []).append(node)
-
 
 @contextlib.contextmanager
 def traced_stdout(
     collector: list[dict[str, Any]] | None = None,
-    paths: dict[str, list[str]] | None = None,
 ) -> Iterator[None]:
     """Redirect FactorySimPy's stdout into events on the current span.
 
@@ -231,10 +305,7 @@ def traced_stdout(
     Pass `collector` (a list) to also capture each classified event as a flat
     dict for post-run analysis by the validation tools. This is independent of
     telemetry: the events are collected whether or not a real span is active.
-
-    Pass `paths` (a dict) to also accumulate each item's node sequence from the
-    `put`/`received` events as they stream — the per-item flow trail that
-    verify_item_flow reads. Also independent of telemetry.
+    Hand that list to `build_item_paths` afterwards for the per-item trails.
     """
     buf = io.StringIO()
     try:
@@ -245,7 +316,7 @@ def traced_stdout(
         for line in buf.getvalue().splitlines():
             stripped = line.strip()
             if stripped:
-                _add_sim_event(span, stripped, collector, paths)
+                _add_sim_event(span, stripped, collector)
 
 
 def configure_telemetry(

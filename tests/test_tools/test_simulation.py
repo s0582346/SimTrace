@@ -8,7 +8,13 @@ from simtrace import model as model_module
 from simtrace.model import FactoryModel
 from simtrace.tools.builders import create_buffer
 from simtrace.tools.builders import create_sink, create_source
-from simtrace.tools.simulation import connect, get_model, reset_model, run_simulation
+from simtrace.tools.simulation import (
+    connect,
+    get_model,
+    get_wiring,
+    reset_model,
+    run_simulation,
+)
 
 
 @pytest.fixture
@@ -107,6 +113,69 @@ def test_get_model_is_json_serializable(wired):
     connect("buf", "src", "snk", model=wired)
     snapshot = get_model(model=wired)
     assert json.loads(json.dumps(snapshot)) == snapshot
+
+
+# --- get_wiring -----------------------------------------------------------
+
+
+def test_get_wiring_empty():
+    assert get_wiring(model=FactoryModel()) == {"hops": [], "nodes": []}
+
+
+def test_get_wiring_lists_unconnected_nodes_with_empty_edges(wired):
+    wiring = get_wiring(model=wired)
+
+    assert wiring["hops"] == []
+    nodes = {n["id"]: n for n in wiring["nodes"]}
+    assert nodes["src"] == {"id": "src", "in_edges": [], "out_edges": []}
+    # The buffer exists but was never connected, so it is in neither list.
+    assert "buf" not in nodes
+
+
+def test_get_wiring_reports_the_hop(wired):
+    connect("buf", "src", "snk", model=wired)
+    wiring = get_wiring(model=wired)
+
+    assert wiring["hops"] == [{"edge": "buf", "src": "src", "dest": "snk"}]
+    nodes = {n["id"]: n for n in wiring["nodes"]}
+    assert nodes["src"]["out_edges"] == ["buf"]
+    assert nodes["snk"]["in_edges"] == ["buf"]
+
+
+def test_get_wiring_keeps_connect_order_at_a_shared_destination(model):
+    """The order is the whole point: it is what FIRST_AVAILABLE drains by."""
+    create_source("hot", inter_arrival_time=1, blocking=True, model=model)
+    create_source("cold", inter_arrival_time=1, blocking=True, model=model)
+    create_sink("snk", model=model)
+    create_buffer("b_cold", capacity=1, model=model)
+    create_buffer("b_hot", capacity=1, model=model)
+
+    # Wired against creation order, so a creation-ordered answer would differ.
+    connect("b_hot", "hot", "snk", model=model)
+    connect("b_cold", "cold", "snk", model=model)
+
+    wiring = get_wiring(model=model)
+    nodes = {n["id"]: n for n in wiring["nodes"]}
+    assert nodes["snk"]["in_edges"] == ["b_hot", "b_cold"]
+    assert [hop["edge"] for hop in wiring["hops"]] == ["b_hot", "b_cold"]
+
+
+def test_get_wiring_agrees_with_get_model(wired):
+    connect("buf", "src", "snk", model=wired)
+
+    hops = {(h["edge"], h["src"], h["dest"]) for h in get_wiring(model=wired)["hops"]}
+    live = {
+        (e["id"], e["src"], e["dest"])
+        for e in get_model(model=wired)["edges"]
+        if e["src"] is not None
+    }
+    assert hops == live
+
+
+def test_get_wiring_is_json_serializable(wired):
+    connect("buf", "src", "snk", model=wired)
+    wiring = get_wiring(model=wired)
+    assert json.loads(json.dumps(wiring)) == wiring
 
 
 # --- run_simulation -------------------------------------------------------

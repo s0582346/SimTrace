@@ -99,8 +99,8 @@ def test_process_plans_stay_on_their_branches():
     run_simulation(2000, seed=7, model=m)
 
     for path in m.item_paths.values():
-        if len(path) == 1:
-            continue  # generated near t=end; never left its source
+        if "mill_std" not in path and "mill_prem" not in path:
+            continue  # generated near t=end; never reached a mill
         if path[0] == STANDARD_SOURCE:
             assert "mill_std" in path and "mill_prem" not in path
         else:

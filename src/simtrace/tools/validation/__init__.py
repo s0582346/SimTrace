@@ -5,8 +5,9 @@ happened, each in its own submodule with its own helpers:
 
   - `conservation.verify_conservation` — "are all generated items accounted
     for?" via a mass-balance over the nodes' and edges' ground-truth counters.
-  - `item_flow.verify_item_flow` — "did each delivered item follow a proper
-    route?" by checking every item that reached a sink against the wired graph.
+  - `item_flow.verify_item_flow` — "did each delivered item travel a complete
+    wired route?" by replaying the node/edge trail of every item that reached a
+    sink against the wiring, Source to Sink.
 
 Both are *dynamic* checks (they need a run to have happened), distinct from the
 static graph checks a future `validate_model` will do *before* a run. This

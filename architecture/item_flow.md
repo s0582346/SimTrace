@@ -1,10 +1,12 @@
 # Item-flow check
 
-The conservation check asks whether any item went missing. This one asks a
-different question about the items that **did** arrive: **did each one get there
-by a proper route?** An item that reaches the end having followed a real path
-through the plant *passes*. An item that reaches the end having somehow taken a
-step the plant doesn't allow is an **alarm**.
+Every item that reached a Sink in the last run travelled some route, and this
+check confirms it is a route the plant actually has. Each item's trail names the
+stations it visited and the edge that carried it between each pair. A trail
+*passes* when it runs from a Source to a Sink and every move in it was carried by
+an edge wired exactly between the two stations it joins. A trail holding a move
+no edge accounts for is an **alarm**, because the journey the run recorded
+contradicts the plant as it was built.
 
 We only judge the items we can prove arrived, which are the ones that reached the end of
 the line. Items still stuck somewhere, still being worked on, or thrown away are
@@ -31,29 +33,33 @@ flowchart LR
 
 ## Flowchart
 
-As the run unfolds, we watch each item and note, in order, the stations it passes
-through — building up its journey. When an item reaches the end, we compare the
-journey it took against the plant's connections.
+During the run every hand-off is narrated into the event log. Afterwards,
+`telemetry.build_item_paths` reads those events into `model.item_paths`: one
+trail per item, alternating node and edge ids —
+`["src", "B1", "M1", "B2", "M2", "B3", "snk"]` — so the trail names not only the
+stations but the edge that carried each hop.
 
-```mermaid
-flowchart TD
-    start(["watch each item as it moves"]) --> track["note, in order, the stations<br/>it passes through"]
-    track --> arrived{"did the item<br/>reach the end?"}
+`verify_item_flow` then judges each trail in four steps:
 
-    arrived -->|no, still in the plant| skip(["not judged here"])
+1. **Head repair:** a non-blocking Source hands its first item over without
+   naming itself, so that trail starts at an edge; `_resolve_head` prepends the
+   edge's own `src_node`.
+2. **Delivered filter:** only trails ending at a Sink are judged; the rest are
+   in flight or discarded, which is `verify_conservation`'s concern.
+3. **Shape:** even positions must be node ids, odd positions edge ids, and the
+   trail must have odd length (end on a node). A trail that fails this is not
+   readable as a journey at all: the fault is in the captured trail, not the
+   routing.
+4. **Route:** `trail[0]` must be a Source, `trail[-1]` a Sink, and every hop
+   `(before, edge, after)` must satisfy `edge.src_node == before` and
+   `edge.dest_node == after`, checked against the adjacency built from the live
+   wiring.
 
-    arrived -->|yes| walk["walk its journey step by step"]
-    walk --> step{"is every step a<br/>real connection?"}
-    step -->|yes| ok(["proper"])
-    step -->|no| alarm(["improper"])
+A trail that clears all four counts toward `passed`; the first step that fails
+puts it in `improper` as `{item, trail, at, reason}`, where `at` is the index of
+the earliest fault and `reason` names what the wiring actually allows there.
 
-    classDef good fill:#e6f4ea,stroke:#137333,color:#0b3d1f;
-    classDef bad fill:#fce8e6,stroke:#c5221f,color:#5c0d0a;
-    classDef muted fill:#f1f3f4,stroke:#5f6368,color:#3c4043;
-    class ok good;
-    class alarm bad;
-    class skip muted;
-```
+![How verify_item_flow judges each item's trail](../assets/item_flow.png)
 
 ## Why we judge only the arrivals
 

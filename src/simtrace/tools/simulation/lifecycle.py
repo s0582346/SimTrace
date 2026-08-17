@@ -2,8 +2,8 @@
 
 `run_simulation` executes the assembled model up to a cutoff and returns per-
 node/edge stats; `reset_model` discards the session graph and restarts the clock
-at 0. `run_simulation` also captures this run's item-flow events and per-item
-node paths onto the model for the validation tools to replay.
+at 0. `run_simulation` also captures this run's item-flow events and the per-item
+trails built from them onto the model for the validation tools to replay.
 
 Conventions (see architecture/simulation_tools.md):
   - fail with friendly ValueErrors, not raw KeyErrors,
@@ -18,7 +18,7 @@ import random
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
 from simtrace.model import reset_model as reset_session_model
-from simtrace.tools.telemetry import traced_stdout
+from simtrace.tools.telemetry import build_item_paths, traced_stdout
 from simtrace.tools.utils import require_positive_number
 
 
@@ -83,11 +83,15 @@ def run_simulation(
         # Random instance would leave those unseeded.
         random.seed(seed)
 
-    # Capture this run's item-flow events and per-item node paths onto the model for the validation tools
+    # Capture this run's item-flow events onto the model for the validation tools,
+    # then derive each item's trail from them. Both lines of a hop (the node's and
+    # the edge's) have to be seen before the hop can be placed, so the trails are
+    # built in one pass afterwards rather than accumulated as the run streams.
     model.events.clear()
     model.item_paths.clear()
-    with traced_stdout(collector=model.events, paths=model.item_paths):
+    with traced_stdout(collector=model.events):
         model.env.run(until=until)
+    model.item_paths.update(build_item_paths(model.events, model.edges.keys()))
 
     nodes = {
         node_id: getattr(node, "stats", None)
