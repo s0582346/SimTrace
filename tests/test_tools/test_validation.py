@@ -6,7 +6,7 @@ import json
 import pytest
 
 from simtrace.model import FactoryModel
-from simtrace.tools.builders import create_buffer
+from simtrace.tools.builders import create_buffer, create_conveyor, create_fleet
 from simtrace.tools.builders import (
     create_combiner,
     create_machine,
@@ -208,8 +208,9 @@ def test_conservation_reflects_only_the_last_run(line):
 def two_machine_line(model) -> FactoryModel:
     """src -> B1 -> M1 -> B2 -> M2 -> B3 -> snk, blocking throughout.
 
-    A blocking source narrates each hop with the item id, so a delivered item's
-    reconstructed path is the full [src, M1, M2, snk] route.
+    A blocking source narrates its hand-off with the item id, so a delivered
+    item's trail is the full [src, B1, M1, B2, M2, B3, snk] route — nodes and the
+    edges between them.
     """
     create_source("src", inter_arrival_time=1, blocking=True, model=model)
     create_machine("M1", processing_delay=1, blocking=True, model=model)
@@ -237,13 +238,16 @@ def test_item_flow_all_proper_on_working_line(two_machine_line):
     assert report["improper"] == []
 
 
-def test_item_flow_reconstructs_full_route_with_blocking_source(two_machine_line):
+def test_item_flow_trail_names_the_edges_it_rode(two_machine_line):
     run_simulation(20, model=two_machine_line)
-    # Every delivered item's captured path is the full wired route.
+    # Every delivered item's trail alternates node, edge, node — the full wired
+    # route including what carried it between stations.
     paths = two_machine_line.item_paths
     delivered = [p for p in paths.values() if p and p[-1] == "snk"]
     assert delivered  # something was delivered
-    assert all(p == ["src", "M1", "M2", "snk"] for p in delivered)
+    assert all(
+        p == ["src", "B1", "M1", "B2", "M2", "B3", "snk"] for p in delivered
+    )
 
 
 def test_item_flow_delivered_matches_conservation(two_machine_line):
@@ -257,10 +261,9 @@ def test_item_flow_delivered_matches_conservation(two_machine_line):
 
 
 def test_item_flow_non_blocking_source_still_proper(model):
-    # A non-blocking source narrates its first hop without an item id, so the
-    # captured path starts downstream of the source ([M1, M2, snk]). That missing
-    # head is not a wrong turn: the sub-path is still a connected wired route, so
-    # the item still passes (no false alarm).
+    # A non-blocking source hands its first item over without naming it, so the
+    # trail begins at the EDGE ([B1, M1, ...]) instead of the source. The edge
+    # knows its own src_node, so the source is read off it and the item passes.
     create_source("src", inter_arrival_time=1, blocking=False, model=model)
     create_machine("M1", processing_delay=1, blocking=True, model=model)
     create_machine("M2", processing_delay=1, blocking=True, model=model)
@@ -276,45 +279,128 @@ def test_item_flow_non_blocking_source_still_proper(model):
     report = verify_item_flow(model=model)
     assert report["delivered"] > 0
     assert report["all_proper"] is True
-    # Confirm the head really is missing (starts at the first machine).
+    # Confirm the head really is un-narrated: the trail starts with the edge.
     delivered = [p for p in model.item_paths.values() if p and p[-1] == "snk"]
-    assert all(p[0] == "M1" for p in delivered)
+    assert all(p[0] == "B1" for p in delivered)
 
 
 # --- improper paths -------------------------------------------------------
 
 
-def test_item_flow_flags_a_jump_with_no_wired_edge(two_machine_line):
+def test_item_flow_flags_a_hop_the_plant_does_not_allow(two_machine_line):
     run_simulation(20, model=two_machine_line)
-    # Inject a delivered item whose path jumps src -> M2 (wiring is src -> M1 ->
-    # M2, so there is no wired edge src -> M2). It must be flagged.
-    two_machine_line.item_paths["ghost"] = ["src", "M2", "snk"]
+    # Inject a delivered item that rode B1 from src straight to M2 (B1 is wired
+    # src -> M1, and there is no src -> M2 hop at all). It must be flagged.
+    two_machine_line.item_paths["ghost"] = ["src", "B1", "M2", "B3", "snk"]
 
     report = verify_item_flow(model=two_machine_line)
     assert report["all_proper"] is False
     flagged = {f["item"]: f for f in report["improper"]}
     assert "ghost" in flagged
-    assert flagged["ghost"]["bad_hop"] == ["src", "M2"]
-    assert flagged["ghost"]["path"] == ["src", "M2", "snk"]
+    assert flagged["ghost"]["at"] == 1
+    assert flagged["ghost"]["trail"] == ["src", "B1", "M2", "B3", "snk"]
     # The reason names the unreachable target and where src actually connects
-    # (M1), pointing at the intended next node rather than restating the hop.
+    # (M1, via B1), pointing at the intended next station rather than restating
+    # the hop.
     reason = flagged["ghost"]["reason"]
     assert "M2 is not reachable from src" in reason
-    assert "M1" in reason
+    assert "M1 (via B1)" in reason
     # The real items are unaffected — they still pass.
     assert report["passed"] == report["delivered"] - 1
+
+
+def test_item_flow_flags_a_legal_hop_carried_by_the_wrong_edge(two_machine_line):
+    run_simulation(20, model=two_machine_line)
+    # src -> M1 IS a wired hop, but B3 is wired M2 -> snk, so B3 cannot have
+    # carried it. Only the edge id can catch this — a node-only trail could not.
+    two_machine_line.item_paths["ghost"] = [
+        "src", "B3", "M1", "B2", "M2", "B3", "snk",
+    ]
+
+    report = verify_item_flow(model=two_machine_line)
+    flagged = {f["item"]: f for f in report["improper"]}
+    assert flagged["ghost"]["at"] == 1
+    assert flagged["ghost"]["reason"] == (
+        "B3 carried src -> M1, but B3 is M2 -> snk"
+    )
+
+
+def test_item_flow_flags_a_trail_that_skips_the_edge(two_machine_line):
+    run_simulation(20, model=two_machine_line)
+    # A node-only trail no longer type-checks: position 1 must be an edge.
+    two_machine_line.item_paths["ghost"] = ["src", "M1", "snk"]
+
+    report = verify_item_flow(model=two_machine_line)
+    flagged = {f["item"]: f for f in report["improper"]}
+    assert flagged["ghost"]["at"] == 1
+    assert "expected an edge at position 1" in flagged["ghost"]["reason"]
+    assert "M1 is a node" in flagged["ghost"]["reason"]
 
 
 def test_item_flow_ignores_incomplete_items(two_machine_line):
     run_simulation(20, model=two_machine_line)
     baseline = verify_item_flow(model=two_machine_line)
-    # An item that never reached a sink (stuck in a buffer) is not judged: it is
-    # conservation's concern, not a path fault here.
-    two_machine_line.item_paths["stuck"] = ["src", "M1"]
+    # An item that never reached a sink (still sitting in a buffer) is not judged:
+    # it is conservation's concern, not a path fault here.
+    two_machine_line.item_paths["stuck"] = ["src", "B1"]
 
     report = verify_item_flow(model=two_machine_line)
     assert report["delivered"] == baseline["delivered"]  # 'stuck' not counted
     assert report["all_proper"] is True
+
+
+# --- head resolution across plant shapes ----------------------------------
+
+
+def test_item_flow_resolves_the_source_below_a_merge(model):
+    # Two NON-BLOCKING sources merge into one machine, so no trail names its
+    # source. The trails still name the buffer that carried each item, and each
+    # buffer has exactly one src_node, so every item is attributed to its true
+    # source. Nothing here is guesswork or unprovable.
+    create_source("srcA", inter_arrival_time=2, blocking=False, model=model)
+    create_source("srcB", inter_arrival_time=2, blocking=False, model=model)
+    create_machine("M1", processing_delay=1, blocking=True, model=model)
+    create_sink("snk", model=model)
+    create_buffer("BA", capacity=5, model=model)
+    create_buffer("BB", capacity=5, model=model)
+    create_buffer("B3", capacity=5, model=model)
+    connect("BA", "srcA", "M1", model=model)
+    connect("BB", "srcB", "M1", model=model)
+    connect("B3", "M1", "snk", model=model)
+    run_simulation(40, seed=1, model=model)
+
+    report = verify_item_flow(model=model)
+    assert report["delivered"] > 0
+    assert report["all_proper"] is True
+    assert report["passed"] == report["delivered"]
+
+
+@pytest.mark.parametrize("mid_edge", ["buffer", "conveyor", "fleet"])
+@pytest.mark.parametrize("blocking", [True, False])
+def test_item_flow_proves_the_route_across_every_edge_type(model, mid_edge, blocking):
+    # Buffers and fleets narrate their own put one way ("X is putting item ..."),
+    # conveyors another ("X:put: putting item ... on belt"). Both wordings have to
+    # be read, or a non-blocking source feeding that edge type loses its head.
+    create_source("src", inter_arrival_time=1, blocking=blocking, model=model)
+    create_machine("M1", processing_delay=1, blocking=True, model=model)
+    create_machine("M2", processing_delay=1, blocking=True, model=model)
+    create_sink("snk", model=model)
+    create_buffer("B1", capacity=5, model=model)
+    if mid_edge == "conveyor":
+        create_conveyor("X", conveyor_length=3, speed=1, item_length=1, model=model)
+    elif mid_edge == "fleet":
+        create_fleet("X", capacity=2, delay=1, model=model)
+    else:
+        create_buffer("X", capacity=5, model=model)
+    create_buffer("B2", capacity=5, model=model)
+    connect("B1", "src", "M1", model=model)
+    connect("X", "M1", "M2", model=model)
+    connect("B2", "M2", "snk", model=model)
+    run_simulation(30, seed=1, model=model)
+
+    report = verify_item_flow(model=model)
+    assert report["delivered"] > 0
+    assert report["passed"] == report["delivered"]
 
 
 # --- guards & shape -------------------------------------------------------
