@@ -11,6 +11,9 @@ whole, split across two submodules:
   - `replications.run_replications` — run the assembled model many times and
     report statistics (means, confidence intervals) across the runs, rebuilding
     it from its recorded build spec (`rebuild.build_from_spec`) once per run.
+  - `parallel` — how many of those runs to put on worker processes: it reads the
+    machine's usable core count and prices the batch before spreading it. Used
+    by `replications`, not a tool of its own.
 
 See architecture/simulation_tools.md for the tools' conventions. This package
 re-exports them all so `from simtrace.tools.simulation import connect, ...` and

@@ -17,6 +17,7 @@ dependencies = [
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",
     "opentelemetry-exporter-otlp-proto-http>=1.20",
+    "joblib>=1.5.3",
 ]
 
 [project.urls]
@@ -24,8 +25,10 @@ Repository = "https://github.com/s0582346/SimTrace"
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.11.1",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "sim-tools>=1.3.0",
 ]
 
 [project.scripts]

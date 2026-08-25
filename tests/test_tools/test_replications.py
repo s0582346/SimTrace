@@ -130,6 +130,102 @@ def test_different_seed_base_diverges():
     )
 
 
+# --- parallel execution ----------------------------------------------------
+
+
+def _values(out):
+    """Every replication's metrics, minus the `_`-prefixed metadata.
+
+    The metadata carries a timestamp, which differs between two runs of the
+    same batch.
+    """
+    return [
+        {k: v for k, v in rep.items() if not k.startswith("_")}
+        for rep in out["analysis"]["_individual_replications"]
+    ]
+
+
+def test_this_model_is_small_enough_to_stay_sequential():
+    """The probe does not spawn a pool for a batch measured in milliseconds."""
+    out = run_replications(until=30, replications=4, model=_build_stochastic_line())
+    assert out["execution"]["mode"] == "sequential"
+    assert out["execution"]["workers"] == 1
+
+
+def test_parallel_batch_is_identical_to_the_sequential_one():
+    """Spreading a batch across processes must not move a single value.
+
+    A replication's result depends on its seed, not on the worker count or the
+    order workers finished in, because `_run_one` seeds inside the worker.
+    Compared exactly: each replication is deterministic given its seed, so any
+    difference is a defect rather than float noise.
+    """
+    sequential = run_replications(
+        until=30, replications=4, random_seed_base=3,
+        model=_build_stochastic_line(), n_jobs=1,
+    )
+    spread = run_replications(
+        until=30, replications=4, random_seed_base=3,
+        model=_build_stochastic_line(), n_jobs=2,
+    )
+
+    assert sequential["execution"]["mode"] == "sequential"
+    assert spread["execution"]["mode"] == "parallel"
+    assert spread["execution"]["workers"] == 2
+    assert _values(spread) == _values(sequential)
+
+
+def test_parallel_batch_keeps_replications_in_order():
+    """Workers finish out of order. The batch must not."""
+    out = run_replications(
+        until=30, replications=5, random_seed_base=100,
+        model=_build_stochastic_line(), n_jobs=2,
+    )
+    infos = [
+        rep["_replication_info"]
+        for rep in out["analysis"]["_individual_replications"]
+    ]
+    assert [info["replication"] for info in infos] == [0, 1, 2, 3, 4]
+    assert [info["seed"] for info in infos] == [100 + i * 1000 for i in range(5)]
+
+
+def test_parallel_batch_writes_nothing_to_stdout(capfd):
+    """Under the MCP stdio transport stdout is the JSON-RPC channel.
+
+    Workers inherit it, and FactorySimPy narrates a run with print().
+    `capfd` rather than `capsys`: the capture must happen at file-descriptor
+    level to see another process at all.
+    """
+    capfd.readouterr()  # discard anything from building the model
+    run_replications(
+        until=30, replications=4, model=_build_stochastic_line(), n_jobs=2
+    )
+    assert capfd.readouterr().out == ""
+
+
+def test_n_jobs_one_forces_the_sequential_path():
+    out = run_replications(
+        until=30, replications=4, model=_build_stochastic_line(), n_jobs=1
+    )
+    assert out["execution"]["workers"] == 1
+
+
+def test_bad_n_jobs_rejected():
+    with pytest.raises(ValueError, match="n_jobs"):
+        run_replications(
+            until=30, replications=3, model=_build_stochastic_line(), n_jobs=0
+        )
+
+
+def test_max_workers_env_forces_the_sequential_path(monkeypatch):
+    """The env var caps an explicit n_jobs too."""
+    monkeypatch.setenv("SIMTRACE_MAX_WORKERS", "1")
+    out = run_replications(
+        until=30, replications=4, model=_build_stochastic_line(), n_jobs=4
+    )
+    assert out["execution"]["mode"] == "sequential"
+
+
 # --- failure handling ------------------------------------------------------
 
 

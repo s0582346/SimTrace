@@ -387,6 +387,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         tools still refer to your last `run_simulation`. Build the model with
         the create_*/connect tools first.
 
+        Independent runs are spread across CPU cores when the batch is heavy
+        enough to be worth it, which this decides for itself by timing the first
+        replication on this machine. It changes nothing about the numbers: a
+        replication's result depends on its seed alone.
+
         Args:
             until: simulation end time for each run; must be a positive number.
             replications: number of independent runs; an int in [2, 20]. 10 is
@@ -397,8 +402,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
         Returns a dict with `summary` (a formatted text report — read this
         first), `analysis` (per-metric mean/CI, keyed `node_id.stat_name`),
-        `requested_replications`, `successful_replications`, and `failures`
-        (any runs that raised, with their seeds).
+        `requested_replications`, `successful_replications`, `failures`
+        (any runs that raised, with their seeds), and `execution` (how many
+        cores the batch actually used — reporting detail, not a result).
         """
         # Tighter than the Python API's 100: one tool call runs `replications`
         # full simulations, and `until` is unbounded.

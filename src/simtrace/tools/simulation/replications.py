@@ -4,37 +4,44 @@ A single `run_simulation` is one sample of a random model; to say anything
 defensible about throughput or utilization you need several independent
 replications and a confidence interval. `run_replications` drives that loop:
 
-  1. Validate the replication count (2..100) and snapshot the source model's
-     build spec.
-  2. For each replication i, set a deterministic, well-separated seed
-     (`random_seed_base + i * SEED_STRIDE`), call `random.seed(...)`, rebuild a
-     *fresh* model from the spec, and run it once. The stride keeps per-run seed
-     streams far apart so replications are effectively independent.
-  3. Sort outcomes: successful runs are tagged with `_replication_info`
+  1. Validate the replication count (2..100), read the machine's worker
+     budget, and snapshot the source model's build spec.
+  2. Run replication 0 in this process and time it. That measurement is the
+     probe for step 3; the replication count alone does not say how long one
+     run takes.
+  3. Run the rest, on worker processes if `parallel.choose_workers` finds the
+     remaining work worth it. Either way replication i seeds with
+     `random_seed_base + i * SEED_STRIDE` and rebuilds a *fresh* model from the
+     spec. The stride keeps per-run seed streams apart. The seed is set inside
+     whichever process runs the replication, so a result depends on its seed
+     and not on how the batch was scheduled.
+  4. Sort outcomes: successful runs are tagged with `_replication_info`
      (replication number, seed, timestamp) and collected; a run that raises is
-     recorded separately with its seed, and the loop keeps going (one bad run
-     does not kill the batch).
-  4. Guard: with fewer than two successful runs there is nothing to do
-     statistics on, so raise.
-  5. Hand the successful runs (flattened to scalar metrics) to
-     `ReplicationAnalyzer` and return its analysis alongside the industry
-     summary and the failure log.
+     recorded separately with its seed, and the batch continues.
+  5. Guard: fewer than two successful runs raises, as there is nothing to do
+     statistics on.
+  6. Hand the successful runs (flattened to scalar metrics) to
+     `ReplicationAnalyzer` and return its analysis with the industry summary,
+     the failure log, and a note of how the batch ran.
 
 Only the source model's `spec` is read (the session model's by default). Its
 `env`, nodes, edges, `events` and `item_paths` are never touched, so its clock
 and the last `run_simulation`'s stats stay intact for the `verify_*` tools. The
-spec is copied once up front, so edits to the session model made while a batch
-is in flight cannot change what later replications build.
+spec is copied once up front, so edits made to the session model mid-batch
+cannot change what later replications build. Being a list of plain dicts is
+also what lets it cross a process boundary; the live model cannot.
 """
 
 from __future__ import annotations
 
 import random
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
+from simtrace.tools.simulation import parallel
 from simtrace.tools.simulation.lifecycle import run_simulation
 from simtrace.tools.simulation.rebuild import build_from_spec
 from simtrace.tools.simulation.replication_analysis import ReplicationAnalyzer
@@ -70,12 +77,59 @@ def _flatten_run(result: Dict[str, Any]) -> Dict[str, float]:
     return metrics
 
 
+def _run_one(
+    spec: List[Dict[str, Any]], until: float, seed: int, replication: int
+) -> Dict[str, Any]:
+    """Run one replication and return its outcome as a value.
+
+    This is the function shipped to a worker process, so every argument is
+    picklable: a build spec of plain dicts, a float and two ints. A
+    `simpy.Environment` holds live generators and cannot be pickled, so the
+    model is rebuilt here from the spec.
+
+    Seeding happens inside this call, so the result depends on `seed` and not
+    on which process ran it. `build_from_spec` is looked up on the module, so
+    tests can patch the rebuild seam on the in-process path.
+
+    Returns:
+        `{"replication", "seed", "metrics"}` on success, where `metrics` is the
+        flat scalar mapping plus `_replication_info`; or
+        `{"replication", "seed", "error"}` if the run raised. Failures are
+        values, not exceptions, so one bad replication does not end the batch.
+    """
+    # No-op here. In a worker it keeps FactorySimPy's narration off the
+    # inherited stdout, which under MCP is the JSON-RPC channel.
+    parallel.silence_stdout()
+
+    random.seed(seed)
+    try:
+        # A fresh model per run: re-running the source model would raise on its
+        # second call (until <= clock) and share stats across runs.
+        replica = build_from_spec(spec)
+        result = run_simulation(until, seed=None, model=replica)
+    except Exception as exc:  # one bad run doesn't kill the batch
+        return {
+            "replication": replication,
+            "seed": seed,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    metrics = _flatten_run(result)
+    metrics["_replication_info"] = {
+        "replication": replication,
+        "seed": seed,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    return {"replication": replication, "seed": seed, "metrics": metrics}
+
+
 def run_replications(
     until: float,
     replications: int,
     random_seed_base: int = 0,
     *,
     model: FactoryModel | None = None,
+    n_jobs: int | None = None,
 ) -> Dict[str, Any]:
     """Run `replications` independent runs of the assembled model and analyze them.
 
@@ -89,6 +143,9 @@ def run_replications(
             separated.
         model: the model whose build spec to replicate; defaults to the session
             model.
+        n_jobs: how many worker processes to allow. None (the default) inspects
+            the machine and applies the measured rule then only actually spreads the batch
+            if timing the first replication says it is worth the pool's start-up cost.
 
     Returns:
         A dict with:
@@ -96,12 +153,14 @@ def run_replications(
             CIs, `_replication_summary`, `_individual_replications`),
           - `summary`: the `format_industry_summary` text report,
           - `requested_replications` / `successful_replications`,
-          - `failures`: list of {replication, seed, error} for runs that raised.
+          - `failures`: list of {replication, seed, error} for runs that raised,
+          - `execution`: {workers, mode, cores_detected}.
 
     Raises:
         ValueError: if `until` is not a positive number, `replications` is not
-            an int in [2, 100], `random_seed_base` is not an int, the model has
-            no recorded build steps, or fewer than two runs succeeded.
+            an int in [2, 100], `random_seed_base` is not an int, `n_jobs` is
+            not None/-1/a positive int, the model has no recorded build steps,
+            or fewer than two runs succeeded.
     """
     require_positive_number("until", until)
 
@@ -119,6 +178,9 @@ def run_replications(
             f"random_seed_base must be an int (got {random_seed_base!r})."
         )
 
+    # Ask what the machine allows before running anything
+    budget = parallel.worker_budget(n_jobs)
+
     source = model if model is not None else get_session_model()
 
     # Snapshot the spec now so later edits to the source model can't affect this batch half-way through.
@@ -129,32 +191,35 @@ def run_replications(
             "before running replications."
         )
 
+    seeds = [random_seed_base + i * SEED_STRIDE for i in range(replications)]
+
+    # run replication 0 here and time it 
+    started = time.perf_counter()
+    outcomes = [_run_one(spec, until, seeds[0], 0)]
+    seconds_each = time.perf_counter() - started
+
+    pending = [(spec, until, seeds[i], i) for i in range(1, replications)]
+    if n_jobs is None:
+        # spread the batch only if the probe says it pays for itself.
+        workers = parallel.choose_workers(len(pending), seconds_each, budget)
+    else:
+        # The caller named a count, so use it rather than second-guess it
+        workers = min(budget, len(pending))
+
+    if workers > 1:
+        outcomes.extend(parallel.run_on_workers(_run_one, pending, workers))
+    else:
+        outcomes.extend(_run_one(*task) for task in pending)
+
+    # Outcomes are in replication order on both paths, so `failures` and
+    # `_individual_replications` read the same either way.
     successful: List[Dict[str, Any]] = []
     failures: List[Dict[str, Any]] = []
-
-    for i in range(replications):
-        seed = random_seed_base + i * SEED_STRIDE
-        # Seed the global RNG here (per the replication contract) and let
-        # run_simulation run the model without reseeding again.
-        random.seed(seed)
-        try:
-            # A fresh model per run: re-running the source model would raise on
-            # its second call (until <= clock) and share stats across runs.
-            replica = build_from_spec(spec)
-            result = run_simulation(until, seed=None, model=replica)
-        except Exception as exc:  # one bad run doesn't kill the batch
-            failures.append(
-                {"replication": i, "seed": seed, "error": f"{type(exc).__name__}: {exc}"}
-            )
-            continue
-
-        flat = _flatten_run(result)
-        flat["_replication_info"] = {
-            "replication": i,
-            "seed": seed,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        successful.append(flat)
+    for outcome in outcomes:
+        if "error" in outcome:
+            failures.append(outcome)
+        else:
+            successful.append(outcome["metrics"])
 
     if len(successful) < MIN_REPLICATIONS:
         raise ValueError(
@@ -173,4 +238,5 @@ def run_replications(
         "requested_replications": replications,
         "successful_replications": len(successful),
         "failures": failures,
+        "execution": parallel.describe(workers),
     }
