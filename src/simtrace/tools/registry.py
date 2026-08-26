@@ -422,6 +422,32 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    def validate_model() -> dict:
+        """Check the assembled graph before running it.
+
+        Reads the wiring, runs nothing, changes nothing. Call it once
+        the model is built and wired, and before run_simulation. It catches
+        what a run cannot tell you apart from a genuine result.
+
+        Fix every entry in `errors` before you run: each one either stops the
+        run outright or leaves part of the model taking no part in it. They
+        are: a node missing an in/out edge, an edge created but never
+        connected, a Combiner whose target_quantity_of_each_item doesn't match
+        its in_edge count, a node on no route from a Source to a Sink.
+
+        `warnings` mean the run will succeed at simulating something other than
+        what was intended: a non-blocking node that silently drops items at a
+        full out-edge, a conveyor whose item_length disagrees with the Source
+        feeding it, an UNPACK splitter or a Combiner with no pallets upstream.
+
+        Returns `valid`, `errors`, `warnings`
+        (each finding naming its check, component and what to do), and
+        `checked` (how many nodes and edges were inspected).
+        """
+        return validation.validate_model()
+
+    @mcp.tool()
+    @traced
     def verify_conservation() -> dict:
         """Reconcile every generated item against where it ended up.
 

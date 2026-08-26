@@ -1,7 +1,13 @@
-"""Post-run verification tools that check a *completed* simulation.
+"""Verification tools that check the model, each in its own submodule.
 
-Where `simulation.run_simulation` executes the model, these tools inspect what
-happened, each in its own submodule with its own helpers:
+One is static and runs *before* a simulation:
+
+  - `model_check.validate_model` — "is the graph wired the way it has to be?"
+    by reading the wired graph and the recorded build spec: edge cardinality,
+    unconnected edges, Source-to-Sink reachability, and the parameter
+    mismatches that only become visible once wiring is done.
+
+The other two are dynamic and inspect what a *completed* run did:
 
   - `conservation.verify_conservation` — "are all generated items accounted
     for?" via a mass-balance over the nodes' and edges' ground-truth counters.
@@ -9,15 +15,14 @@ happened, each in its own submodule with its own helpers:
     wired route?" by replaying the node/edge trail of every item that reached a
     sink against the wiring, Source to Sink.
 
-Both are *dynamic* checks (they need a run to have happened), distinct from the
-static graph checks a future `validate_model` will do *before* a run. This
-package re-exports both so `from simtrace.tools.validation import verify_*` and
-`validation.verify_*` keep working as a single tool surface.
+This package re-exports all three so `from simtrace.tools.validation import ...`
+and `validation.<tool>` keep working as a single tool surface.
 """
 
 from __future__ import annotations
 
 from simtrace.tools.validation.conservation import verify_conservation
 from simtrace.tools.validation.item_flow import verify_item_flow
+from simtrace.tools.validation.model_check import validate_model
 
-__all__ = ["verify_conservation", "verify_item_flow"]
+__all__ = ["validate_model", "verify_conservation", "verify_item_flow"]
