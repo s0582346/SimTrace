@@ -32,8 +32,9 @@ agent framework, or a custom client) can drive it.
   and adjusting it as it goes, rather than emitting a fixed script.
 - 🔍 **Traceable by default:** every tool call becomes an OpenTelemetry span you
   can inspect in Jaeger, so you can see exactly how a model was built and run.
-- ✅ **Post-run verification:** conservation and per-item flow checks catch models
-  that silently lose or misroute items.
+- ✅ **Checked before and after:** a static wiring check catches a broken graph
+  before it is run, and conservation and per-item flow checks catch models that
+  silently lose or misroute items after it.
 
 ## Tools
 
@@ -42,11 +43,11 @@ agent framework, or a custom client) can drive it.
 | Nodes (active) | `create_source`, `create_sink`, `create_machine`, `create_splitter`, `create_combiner` | `simtrace.tools.builders.nodes` |
 | Edges (passive) | `create_buffer`, `create_conveyor`, `create_fleet` | `simtrace.tools.builders.edges` |
 | Lifecycle | `connect`, `get_model`, `reset_model`, `run_simulation` | `simtrace.tools.simulation` |
-| Verification | `verify_conservation`, `verify_item_flow` | `simtrace.tools.validation` |
+| Verification | `validate_model`, `verify_conservation`, `verify_item_flow` | `simtrace.tools.validation` |
 
 Design notes live in [`architecture/`](architecture/) (`node_tools.md`,
-`edge_tools.md`, `simulation_tools.md`, `observability.md`). Worked models live in
-[`examples/`](examples/).
+`edge_tools.md`, `simulation_tools.md`, `model_validation.md`,
+`observability.md`). Worked models live in [`examples/`](examples/).
 
 ## Quick start
 
