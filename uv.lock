@@ -1911,6 +1911,7 @@ dependencies = [
     { name = "rich" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sim-tools" },
 ]
 
 [package.dev-dependencies]
@@ -1918,7 +1919,6 @@ dev = [
     { name = "matplotlib" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
-    { name = "sim-tools" },
 ]
 
 [package.metadata]
@@ -1935,6 +1935,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "scipy", specifier = ">=1.11" },
+    { name = "sim-tools", specifier = ">=1.3.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1942,7 +1943,6 @@ dev = [
     { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "sim-tools", specifier = ">=1.3.0" },
 ]
 
 [[package]]

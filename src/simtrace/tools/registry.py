@@ -402,9 +402,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
         Returns a dict with `summary` (a formatted text report — read this
         first), `analysis` (per-metric mean/CI, keyed `node_id.stat_name`),
-        `requested_replications`, `successful_replications`, `failures`
-        (any runs that raised, with their seeds), and `execution` (how many
-        cores the batch actually used — reporting detail, not a result).
+        `precision` (per metric, the fewest of these runs that would have put
+        the 95% interval within +/-10% of the mean, or `reached: false` when
+        this batch never got there), `requested_replications`, `successful_replications`,
+        `failures` (any runs that raised, with their seeds), and `execution`
+        (how many cores the batch actually used).
         """
         # Tighter than the Python API's 100: one tool call runs `replications`
         # full simulations, and `until` is unbounded.

@@ -51,6 +51,37 @@ def _pct(value: Any) -> str:
     return f"{value:.2%}" if isinstance(value, (int, float)) else "n/a"
 
 
+def extract_metrics(
+    replications: List[Dict[str, Any]],
+) -> Dict[str, List[float]]:
+    """Collect every numeric metric across replications, in run order.
+
+    Args:
+        replications: flat metric dicts, one per run, in the order they ran.
+
+    Returns:
+        Metric name -> its values, one per run that reported it. Metadata keys
+        (leading `_`) and non-numeric values are skipped. `bool` is an `int`
+        subclass, so it is excluded explicitly — a True/False flag is not a
+        metric to average.
+    """
+    metrics: Dict[str, List[float]] = {}
+
+    for replication in replications:
+        for key, value in replication.items():
+            # Skip metadata and non-numeric values (bool is an int subclass).
+            if (
+                key.startswith("_")
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+            ):
+                continue
+
+            metrics.setdefault(key, []).append(float(value))
+
+    return metrics
+
+
 class ReplicationAnalyzer:
     """Analyzes multiple simulation replications with industry-standard statistics."""
 
@@ -118,27 +149,8 @@ class ReplicationAnalyzer:
     def _extract_metrics(
         self, replications: List[Dict[str, Any]]
     ) -> Dict[str, List[float]]:
-        """Extract all numeric metrics from replications.
-
-        Metadata keys (leading `_`) and non-numeric values are skipped. `bool`
-        is an `int` subclass, so it is excluded explicitly — a True/False flag
-        is not a metric to average.
-        """
-        metrics: Dict[str, List[float]] = {}
-
-        for replication in replications:
-            for key, value in replication.items():
-                # Skip metadata and non-numeric values (bool is an int subclass).
-                if (
-                    key.startswith("_")
-                    or isinstance(value, bool)
-                    or not isinstance(value, (int, float))
-                ):
-                    continue
-
-                metrics.setdefault(key, []).append(float(value))
-
-        return metrics
+        """Extract all numeric metrics from replications. See `extract_metrics`."""
+        return extract_metrics(replications)
 
     def _analyze_metric(
         self, metric_name: str, values: List[float]

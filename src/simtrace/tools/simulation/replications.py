@@ -23,6 +23,9 @@ replications and a confidence interval. `run_replications` drives that loop:
   6. Hand the successful runs (flattened to scalar metrics) to
      `ReplicationAnalyzer` and return its analysis with the industry summary,
      the failure log, and a note of how the batch ran.
+  7. Ask `precision.precision_report` how few of those runs would have sufficed
+     for each metric, and return that alongside. It reads the runs already made
+     and costs nothing extra.
 
 Only the source model's `spec` is read (the session model's by default). Its
 `env`, nodes, edges, `events` and `item_paths` are never touched, so its clock
@@ -43,8 +46,16 @@ from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
 from simtrace.tools.simulation import parallel
 from simtrace.tools.simulation.lifecycle import run_simulation
+from simtrace.tools.simulation.precision import (
+    DEFAULT_PRECISION,
+    precision_report,
+    validate_settings,
+)
 from simtrace.tools.simulation.rebuild import build_from_spec
-from simtrace.tools.simulation.replication_analysis import ReplicationAnalyzer
+from simtrace.tools.simulation.replication_analysis import (
+    ReplicationAnalyzer,
+    extract_metrics,
+)
 from simtrace.tools.utils import require_positive_number
 
 # Per-run seed spacing. i * SEED_STRIDE keeps replications' RNG streams far
@@ -53,6 +64,34 @@ SEED_STRIDE = 1000
 
 MIN_REPLICATIONS = 2
 MAX_REPLICATIONS = 100
+
+# The stat a Sink counts finished items in. See FactorySimPy's sink.stats.
+SINK_THROUGHPUT_STAT = "num_item_received"
+
+
+def sink_throughput_metrics(spec: List[Dict[str, Any]]) -> List[str]:
+    """Name the throughput metric of every sink in a build spec.
+
+    Throughput is the number a study is usually about, so this is the default
+    answer to "which metrics matter here" — for the precision tables below, and
+    for anything else that has to focus on a few metrics out of the dozens a run
+    reports.
+
+    Reading the spec rather than a finished run means the names are available
+    before anything has run.
+
+    Args:
+        spec: a model's recorded build log ({"op", "kwargs"} per step).
+
+    Returns:
+        One `sink_id.num_item_received` per `create_sink` step, in build order.
+        Empty for a model with no sink.
+    """
+    return [
+        f"{step['kwargs']['id']}.{SINK_THROUGHPUT_STAT}"
+        for step in spec
+        if step["op"] == "create_sink" and "id" in step["kwargs"]
+    ]
 
 
 def _flatten_run(result: Dict[str, Any]) -> Dict[str, float]:
@@ -128,6 +167,8 @@ def run_replications(
     replications: int,
     random_seed_base: int = 0,
     *,
+    desired_precision: float = DEFAULT_PRECISION,
+    precision_tables_for: List[str] | None = None,
     model: FactoryModel | None = None,
     n_jobs: int | None = None,
 ) -> Dict[str, Any]:
@@ -141,6 +182,13 @@ def run_replications(
             `random_seed_base + i * SEED_STRIDE`, so the whole batch is
             reproducible from this one number and the per-run streams stay well
             separated.
+        desired_precision: target for the confidence interval's half-width as a
+            share of the mean, used only by the `precision` section. 0.10 means
+            "within +/-10% of the mean".
+        precision_tables_for: metrics whose full per-run precision table to
+            include. None (the default) takes every sink's throughput. Pass an
+            empty list for no tables at all; one table per metric would dwarf
+            the rest of the payload.
         model: the model whose build spec to replicate; defaults to the session
             model.
         n_jobs: how many worker processes to allow. None (the default) inspects
@@ -152,15 +200,18 @@ def run_replications(
           - `analysis`: the `ReplicationAnalyzer` output (per-metric stats,
             CIs, `_replication_summary`, `_individual_replications`),
           - `summary`: the `format_industry_summary` text report,
+          - `precision`: the `precision_report` output — per metric, how few of
+            these runs would have reached `desired_precision`,
           - `requested_replications` / `successful_replications`,
           - `failures`: list of {replication, seed, error} for runs that raised,
           - `execution`: {workers, mode, cores_detected}.
 
     Raises:
         ValueError: if `until` is not a positive number, `replications` is not
-            an int in [2, 100], `random_seed_base` is not an int, `n_jobs` is
-            not None/-1/a positive int, the model has no recorded build steps,
-            or fewer than two runs succeeded.
+            an int in [2, 100], `random_seed_base` is not an int,
+            `desired_precision` is not between 0 and 1, `n_jobs` is not
+            None/-1/a positive int, the model has no recorded build steps, or
+            fewer than two runs succeeded.
     """
     require_positive_number("until", until)
 
@@ -177,6 +228,10 @@ def run_replications(
         raise ValueError(
             f"random_seed_base must be an int (got {random_seed_base!r})."
         )
+
+    # Checked here rather than where it is used, at the end: a typo'd target
+    # should not surface only after the whole batch has run.
+    validate_settings(desired_precision)
 
     # Ask what the machine allows before running anything
     budget = parallel.worker_budget(n_jobs)
@@ -232,9 +287,25 @@ def run_replications(
     analysis = analyzer.analyze_replications(successful)
     summary = analyzer.format_industry_summary(analysis)
 
+    # Same metric set the analysis covers, in run order — the order is what the
+    # confidence interval method walks.
+    # `is None` rather than a falsy test: an empty list is a caller asking for
+    # no tables, not for the default.
+    tables_for = (
+        sink_throughput_metrics(spec)
+        if precision_tables_for is None
+        else precision_tables_for
+    )
+    precision = precision_report(
+        extract_metrics(successful),
+        desired_precision=desired_precision,
+        tables_for=tables_for,
+    )
+
     return {
         "analysis": analysis,
         "summary": summary,
+        "precision": precision,
         "requested_replications": replications,
         "successful_replications": len(successful),
         "failures": failures,
