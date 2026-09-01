@@ -47,18 +47,35 @@ MIN_VALUES = 2
 TABLE_DECIMALS = 6
 
 
-def _records(frame: Any) -> List[Dict[str, Any]]:
+def records(
+    frame: Any,
+    *,
+    number_rows: bool = False,
+    drop: Iterable[str] = (),
+) -> List[Dict[str, Any]]:
     """Turn a sim-tools summary frame into a list of plain JSON row dicts.
 
-    The frame is indexed by replication number (1..n) under the name
-    `replications`; that index becomes a field of each row so the rows stand on
-    their own. Values are forced to native floats and `nan` becomes None, which is what
-    the first rows of every metric hold before a standard deviation exists.
+    Every row carries its replication number under `replications`, so the rows
+    stand on their own. Values are forced to native floats and `nan` becomes
+    None, which is what the first rows of every metric hold before a standard
+    deviation exists.
+
+    Args:
+        frame: a summary frame from sim-tools.
+        number_rows: number the rows 1..n instead of reading the frame's index.
+            `ReplicationsAlgorithm` returns its metrics concatenated with the
+            index reset, so there the position in the group *is* the run number.
+        drop: columns to leave out, such as the `metric` label that names the
+            group a row came from.
     """
+    dropped = set(drop)
     rows: List[Dict[str, Any]] = []
-    for index, row in frame.iterrows():
-        record: Dict[str, Any] = {"replications": int(index)}
+    for position, (index, row) in enumerate(frame.iterrows(), start=1):
+        replication = position if number_rows else int(index)
+        record: Dict[str, Any] = {"replications": replication}
         for column, value in row.items():
+            if column in dropped:
+                continue
             record[str(column)] = float(value)
         rows.append(record)
     # inf/nan -> None, so the payload is strict JSON.
@@ -186,7 +203,7 @@ def precision_report(
             "final_deviation": float(frame["% deviation"].iloc[-1]),
         }
         if name in wanted_tables:
-            entry["table"] = _records(frame)
+            entry["table"] = records(frame)
         metrics[name] = entry
 
     return {"settings": settings, "metrics": _sanitize(metrics)}
