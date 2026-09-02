@@ -412,10 +412,13 @@ def _check_pallets(
 ) -> list[dict]:
     """Nodes that handle packed items need something upstream that packs them.
 
-    A Splitter in UNPACK mode takes a packed item apart, and a Combiner packs
-    into a container it pulls from its first in-edge. Both need a pallet to have
-    entered the flow somewhere above them — from a `flow_item_type="pallet"`
-    Source or from another Combiner.
+    A Splitter takes a packed item apart, and a Combiner packs into a container
+    it pulls from its first in-edge. Both need a pallet to have entered the flow
+    somewhere above them — from a `flow_item_type="pallet"` Source or from
+    another Combiner.
+
+    For a Splitter that is not the whole story: a Source emits an *empty*
+    pallet, so only a Combiner upstream gives it anything to unpack.
     """
     findings: list[dict] = []
     origins = _pallet_origins(model, node_types)
@@ -430,19 +433,50 @@ def _check_pallets(
 
         if node_type == _SPLITTER_TYPE:
             if splitter_modes.get(node_id, "UNPACK") != "UNPACK":
-                continue
-            if _walk(sorted(upstream.get(node_id, set())), upstream) & origins:
-                continue
-            findings.append(
-                _finding(
-                    "pallet_mismatch",
-                    _WARNING,
-                    node_id,
-                    f"Splitter '{node_id}' is in UNPACK mode but nothing "
-                    "upstream of it packs items. Use mode='SPLIT', or feed it "
-                    "from a pallet Source or a Combiner.",
+                # FactorySimPy's splitter always unpacks: it reads the incoming
+                # item's contents, which only a Pallet has. A SPLIT splitter
+                # raises AttributeError on the first item it is handed.
+                findings.append(
+                    _finding(
+                        "splitter_mode",
+                        _ERROR,
+                        node_id,
+                        f"Splitter '{node_id}' is in SPLIT mode, which "
+                        "FactorySimPy does not implement — the run raises on "
+                        "the first item. Use mode='UNPACK' and feed it pallets "
+                        "packed by a Combiner.",
+                    )
                 )
-            )
+                continue
+
+            reachable = _walk(sorted(upstream.get(node_id, set())), upstream)
+            if not reachable & origins:
+                findings.append(
+                    _finding(
+                        "pallet_mismatch",
+                        _WARNING,
+                        node_id,
+                        f"Splitter '{node_id}' unpacks packed items but nothing "
+                        "upstream of it packs any. Feed it from a Combiner.",
+                    )
+                )
+            elif not reachable & {
+                other_id
+                for other_id, other_type in node_types.items()
+                if other_type == _COMBINER_TYPE
+            }:
+                # A Source emits an empty Pallet; only a Combiner fills one.
+                findings.append(
+                    _finding(
+                        "pallet_mismatch",
+                        _WARNING,
+                        node_id,
+                        f"Splitter '{node_id}' is fed pallets straight from a "
+                        "pallet Source, and those are empty. It will emit one "
+                        "item per pallet — the container — and nothing else. "
+                        "Pack the pallets with a Combiner first.",
+                    )
+                )
 
         elif node_type == _COMBINER_TYPE:
             pallet_edge = in_edges[0]
@@ -478,11 +512,13 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
         orphan_edge         an edge was created but never connected
         combiner_quantities target_quantity_of_each_item doesn't match in_edges
         reachability        a node is on no route from a Source to a Sink
+        splitter_mode       a splitter is in SPLIT mode, which cannot run
 
     Warnings:
         silent_discard        a non-blocking node drops items at a full out-edge
         conveyor_item_length  a belt's item length disagrees with its Source's
-        pallet_mismatch       packed items are handled with none produced above
+        pallet_mismatch       packed items are handled with none produced above,
+                              or a splitter is fed empty pallets from a Source
 
     Returns a report dict:
         {
