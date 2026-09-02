@@ -35,6 +35,9 @@ agent framework, or a custom client) can drive it.
 - ✅ **Checked before and after:** a static wiring check catches a broken graph
   before it is run, and conservation and per-item flow checks catch models that
   silently lose or misroute items after it.
+- 🎯 **Checked against an outside answer:** the fixed-value test replaces every
+  distribution with its mean, works out by hand what that deterministic plant
+  must produce, and holds the model's own result against it. 
 - 📊 **Answers with error bars:** a random model is run many times, not once, and
   reported as a mean with a 95% confidence interval. How many runs that takes is
   measured rather than guessed, by the replications algorithm of Hoad, Robinson
@@ -48,12 +51,13 @@ agent framework, or a custom client) can drive it.
 | Edges (passive) | `create_buffer`, `create_conveyor`, `create_fleet` | `simtrace.tools.builders.edges` |
 | Lifecycle | `connect`, `get_model`, `reset_model`, `run_simulation` | `simtrace.tools.simulation` |
 | Replications | `run_replications`, `find_replication_count` | `simtrace.tools.simulation` |
-| Verification | `validate_model`, `verify_conservation`, `verify_item_flow` | `simtrace.tools.validation` |
+| Verification | `validate_model`, `verify_conservation`, `verify_item_flow`, `verify_fixed_value` | `simtrace.tools.validation` |
 
 
 Design notes live in [`architecture/`](architecture/) (`node_tools.md`,
 `edge_tools.md`, `simulation_tools.md`, `model_validation.md`,
-`observability.md`). Worked models live in [`examples/`](examples/).
+`fixed_value.md`, `observability.md`). Worked models live in
+[`examples/`](examples/).
 
 ## Quick start
 
