@@ -261,7 +261,9 @@ def test_unpack_splitter_with_no_pallets_upstream(model):
     assert components(report["warnings"], "pallet_mismatch") == {"spl"}
 
 
-def test_unpack_splitter_fed_by_a_pallet_source_is_quiet(model):
+def test_unpack_splitter_fed_by_a_pallet_source_is_warned_about(model):
+    # A Source emits an *empty* pallet — only a Combiner fills one — so this
+    # splitter has nothing to unpack and emits just the container.
     create_source("src", flow_item_type="pallet", blocking=True, model=model)
     create_splitter("spl", mode="UNPACK", model=model)
     create_sink("snk", model=model)
@@ -272,10 +274,13 @@ def test_unpack_splitter_fed_by_a_pallet_source_is_quiet(model):
 
     report = validate_model(model=model)
 
-    assert "pallet_mismatch" not in checks(report["warnings"])
+    assert report["valid"] is True
+    assert components(report["warnings"], "pallet_mismatch") == {"spl"}
 
 
-def test_split_mode_splitter_needs_no_pallet(model):
+def test_split_mode_splitter_is_an_error(model):
+    # FactorySimPy's splitter always unpacks: it reads the incoming item's
+    # contents, which only a Pallet has, so a SPLIT splitter cannot run.
     create_source("src", blocking=True, model=model)
     create_splitter("spl", mode="SPLIT", split_quantity=3, model=model)
     create_sink("snk", model=model)
@@ -286,6 +291,8 @@ def test_split_mode_splitter_needs_no_pallet(model):
 
     report = validate_model(model=model)
 
+    assert report["valid"] is False
+    assert components(report["errors"], "splitter_mode") == {"spl"}
     assert "pallet_mismatch" not in checks(report["warnings"])
 
 
