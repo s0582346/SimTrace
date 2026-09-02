@@ -2,6 +2,7 @@
 
 import asyncio
 
+import pytest
 from mcp.server.fastmcp import FastMCP
 
 from simtrace.tools.registry import register_tools
@@ -175,3 +176,31 @@ def test_tool_descriptions_carry_decision_point_hints():
     assert "one Source per type" in by_name["create_source"].description
     # connect: wiring order at a shared station encodes priority.
     assert "Connect order matters" in by_name["connect"].description
+
+
+def test_register_tools_exposes_find_replication_count():
+    mcp = FastMCP("test")
+    register_tools(mcp)
+
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+
+    assert "find_replication_count" in by_name
+    schema = by_name["find_replication_count"].inputSchema
+    assert schema["required"] == ["until"]
+    assert "desired_precision" in schema["properties"]
+    assert "target_metrics" in schema["properties"]
+
+
+def test_find_replication_count_budget_capped_at_the_run_limit():
+    """The tool must not recommend a count run_replications would refuse."""
+    mcp = FastMCP("test")
+    register_tools(mcp)
+
+    with pytest.raises(Exception, match="between 2 and 20"):
+        asyncio.run(
+            mcp.call_tool(
+                "find_replication_count",
+                {"until": 10, "replication_budget": 50},
+            )
+        )

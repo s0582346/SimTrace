@@ -37,6 +37,13 @@ graph structure:
   quoting throughput or utilization, use run_replications — it runs the model
   several times and reports means with 95% confidence intervals. Report the
   mean and the interval, not one run's number.
+- How many replications: when the count is not given to you, use
+  find_replication_count first and run_replications with the count it reports.
+  It runs the model until the interval is tight enough and stays tight, so the
+  count is measured rather than guessed. Every run_replications result also
+  carries a `precision` section saying how few of the runs it made would have
+  sufficed; if it reports the target was never reached, say the result is not
+  settled instead of quoting the mean as if it were.
 """
 
 mcp = FastMCP("simpy_blocks", instructions=INSTRUCTIONS)

@@ -11,6 +11,15 @@ whole, split across two submodules:
   - `replications.run_replications` — run the assembled model many times and
     report statistics (means, confidence intervals) across the runs, rebuilding
     it from its recorded build spec (`rebuild.build_from_spec`) once per run.
+  - `precision` — how few of those runs would have sufficed, read off the batch
+    afterwards. Folded into every `run_replications` result; not a tool of its
+    own.
+  - `adaptive.find_replication_count` — the other way round: run until the
+    confidence interval is tight enough and stays that way, and report the
+    count. Answers "how many runs do I need" before `run_replications` is asked
+    for a number.
+  - `replication_plot` — draws a search as a figure. Called by `adaptive` when a
+    path is given, never on its own initiative.
   - `parallel` — how many of those runs to put on worker processes: it reads the
     machine's usable core count and prices the batch before spreading it. Used
     by `replications`, not a tool of its own.
@@ -22,6 +31,7 @@ re-exports them all so `from simtrace.tools.simulation import connect, ...` and
 
 from __future__ import annotations
 
+from simtrace.tools.simulation.adaptive import find_replication_count
 from simtrace.tools.simulation.graph import connect, get_model
 from simtrace.tools.simulation.lifecycle import reset_model, run_simulation
 from simtrace.tools.simulation.rebuild import build_from_spec
@@ -33,5 +43,6 @@ __all__ = [
     "reset_model",
     "run_simulation",
     "run_replications",
+    "find_replication_count",
     "build_from_spec",
 ]

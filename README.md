@@ -35,6 +35,10 @@ agent framework, or a custom client) can drive it.
 - ✅ **Checked before and after:** a static wiring check catches a broken graph
   before it is run, and conservation and per-item flow checks catch models that
   silently lose or misroute items after it.
+- 📊 **Answers with error bars:** a random model is run many times, not once, and
+  reported as a mean with a 95% confidence interval. How many runs that takes is
+  measured rather than guessed, by the replications algorithm of Hoad, Robinson
+  & Davies (2010).
 
 ## Tools
 
@@ -43,7 +47,9 @@ agent framework, or a custom client) can drive it.
 | Nodes (active) | `create_source`, `create_sink`, `create_machine`, `create_splitter`, `create_combiner` | `simtrace.tools.builders.nodes` |
 | Edges (passive) | `create_buffer`, `create_conveyor`, `create_fleet` | `simtrace.tools.builders.edges` |
 | Lifecycle | `connect`, `get_model`, `reset_model`, `run_simulation` | `simtrace.tools.simulation` |
+| Replications | `run_replications`, `find_replication_count` | `simtrace.tools.simulation` |
 | Verification | `validate_model`, `verify_conservation`, `verify_item_flow` | `simtrace.tools.validation` |
+
 
 Design notes live in [`architecture/`](architecture/) (`node_tools.md`,
 `edge_tools.md`, `simulation_tools.md`, `model_validation.md`,
