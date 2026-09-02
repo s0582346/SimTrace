@@ -7,6 +7,14 @@ One is static and runs *before* a simulation:
     unconnected edges, Source-to-Sink reachability, and the parameter
     mismatches that only become visible once wiring is done.
 
+One is independent of the model altogether:
+
+  - `fixed_value.verify_fixed_value` — "is the number right?" by replacing every
+    distribution with its mean, working out what that deterministic plant must
+    produce (`analytic.expected_throughput`), running it, and holding the two
+    against each other. The only check whose answer does not come from the
+    model.
+
 The other two are dynamic and inspect what a *completed* run did:
 
   - `conservation.verify_conservation` — "are all generated items accounted
@@ -15,14 +23,22 @@ The other two are dynamic and inspect what a *completed* run did:
     wired route?" by replaying the node/edge trail of every item that reached a
     sink against the wiring, Source to Sink.
 
-This package re-exports all three so `from simtrace.tools.validation import ...`
+This package re-exports all four so `from simtrace.tools.validation import ...`
 and `validation.<tool>` keep working as a single tool surface.
 """
 
 from __future__ import annotations
 
+from simtrace.tools.validation.analytic import expected_throughput
 from simtrace.tools.validation.conservation import verify_conservation
+from simtrace.tools.validation.fixed_value import verify_fixed_value
 from simtrace.tools.validation.item_flow import verify_item_flow
 from simtrace.tools.validation.model_check import validate_model
 
-__all__ = ["validate_model", "verify_conservation", "verify_item_flow"]
+__all__ = [
+    "validate_model",
+    "verify_conservation",
+    "verify_item_flow",
+    "verify_fixed_value",
+    "expected_throughput",
+]

@@ -511,6 +511,67 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    def verify_fixed_value(
+        until: float,
+        warmup: float | None = None,
+        tolerance: float = 0.01,
+        replication_means: dict[str, float] | None = None,
+    ) -> dict:
+        """Check the model's throughput against one calculated independently.
+
+        The other checks ask whether the model agrees with itself. This one
+        produces a number the model had no hand in and holds it against that.
+
+        Every distribution is replaced by its mean, which turns the model into
+        a deterministic twin. What that twin must produce follows from the
+        wiring: each station's rate is its workplaces divided by its processing
+        time (a holding buffer's is its places divided by its holding time),
+        the smallest of those is the bottleneck, and the sources cap the result
+        from above. The twin is then run and the two numbers compared. A
+        mismatch means the plant is wired or parameterised differently from
+        how it was described — `expected.stations` names every rate so the
+        difference can be traced.
+
+        The session model is only read: its clock and its last `run_simulation`
+        stats are left alone for the other verify_* tools.
+
+        Args:
+            until: end time for the twin's run; must be a positive number. Give
+                it enough room that the line is full well before `warmup` — a
+                short run has too few departures to measure.
+            warmup: point from which departures are counted, so the filling of
+                the line does not drag the measured rate down. Defaults to half
+                of `until`.
+            tolerance: deviation allowed between the calculated and the
+                measured rate, as a share of the calculated one. 0.01 is right
+                for a deterministic line; it is never applied tighter than one
+                item's worth of the counting window.
+            replication_means: means from a `run_replications` batch of this
+                model, keyed as that tool reports them (e.g.
+                "snk.num_item_received"). The deterministic throughput is also
+                a ceiling for the stochastic one, so each mean is checked
+                against it. A mean above the ceiling is not believable.
+
+        Returns a dict with `summary` (read this first), `passed`,
+        `applicable`, `blockers`, `expected` (calculated rates, the station
+        table with the arithmetic behind each rate, and the bottleneck),
+        `measured`, `comparison`, `upper_bound`, `substitutions` (every
+        distribution that was replaced), `warnings` and `settings`.
+
+        When `applicable` is false no expected value could be stated — a fleet
+        on the route, a loop in the wiring, or a splitter whose pallets cannot
+        be counted. Report that rather than quoting the twin's output as if it
+        had been checked.
+        """
+        return validation.verify_fixed_value(
+            until=until,
+            warmup=warmup,
+            tolerance=tolerance,
+            replication_means=replication_means,
+        )
+
+    @mcp.tool()
+    @traced
     def verify_conservation() -> dict:
         """Reconcile every generated item against where it ended up.
 
