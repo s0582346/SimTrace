@@ -344,7 +344,7 @@ class Source(Node):
                        
 
                     else:
-                        out_edge_index_to_put = None
+                        out_edge_to_put = None
                         for edge in self.out_edges:
                             if edge.can_put():
                                 out_edge_to_put = edge
