@@ -12,7 +12,7 @@ Combiner expecting more in-edges than it has, a branch that leads nowhere. A
 **warning** means the run works and returns a plausible answer that is not the
 one the modeller meant: items dropped at a non-blocking node, a conveyor whose
 item length disagrees with the items travelling on it, an UNPACK splitter with
-no pallets upstream.
+no pallets upstream, parallel branches that lead on over different stations.
 
 Nothing here advances the clock or mutates the model, so it can be called on a
 model that has never run and on one that has.
@@ -365,6 +365,62 @@ def _check_silent_discard(model: FactoryModel) -> list[dict]:
     return findings
 
 
+def _check_branch_symmetry(
+    model: FactoryModel, node_types: dict[str, str], downstream: dict[str, set]
+) -> list[dict]:
+    """Branches out of one node must reach the same nodes beyond their first.
+
+    A node whose out-edges lead to two or more distinct nodes spreads its
+    output over them. The set of nodes reachable beyond each of those must be
+    the same; where it is not, items taking one branch pass a node that items
+    taking another do not.
+
+    The first node of each branch is left out of the comparison: parallel
+    stations are distinct nodes by construction.
+
+    A Splitter is exempt. It sends a pallet's contents down one out-edge and
+    the empty container down another, so its branches reach different nodes.
+
+    A branch that skips a node other than the bottleneck leaves the throughput
+    unchanged, so no rate calculation reports it.
+    """
+    findings: list[dict] = []
+
+    for node_id, successors in downstream.items():
+        if len(successors) < 2 or node_types.get(node_id) == _SPLITTER_TYPE:
+            continue
+
+        beyond = {
+            successor: _walk(list(downstream.get(successor, ())), downstream)
+            for successor in successors
+        }
+        shared = set.intersection(*beyond.values())
+        if all(reach == shared for reach in beyond.values()):
+            continue
+
+        described = "; ".join(
+            f"via '{successor}' to "
+            + (", ".join(f"'{n}'" for n in sorted(beyond[successor])) or "nothing")
+            for successor in sorted(successors)
+        )
+        findings.append(
+            _finding(
+                "branch_symmetry",
+                _WARNING,
+                node_id,
+                f"{node_types.get(node_id, 'Node')} '{node_id}' spreads its "
+                f"output over "
+                + ", ".join(f"'{s}'" for s in sorted(successors))
+                + ", but the branches do not lead on over the same stations: "
+                f"{described}. Parallel branches are meant to be "
+                "interchangeable, so items taking one of them skip a station "
+                "the others pass through. The throughput does not show this.",
+            )
+        )
+
+    return findings
+
+
 def _check_conveyor_item_length(
     model: FactoryModel, node_types: dict[str, str], upstream: dict[str, set]
 ) -> list[dict]:
@@ -516,6 +572,7 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
 
     Warnings:
         silent_discard        a non-blocking node drops items at a full out-edge
+        branch_symmetry       parallel branches lead on over different stations
         conveyor_item_length  a belt's item length disagrees with its Source's
         pallet_mismatch       packed items are handled with none produced above,
                               or a splitter is fed empty pallets from a Source
@@ -555,6 +612,7 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
     findings += _check_combiner_quantities(model, node_types)
     findings += _check_reachability(model, node_types, downstream, upstream)
     findings += _check_silent_discard(model)
+    findings += _check_branch_symmetry(model, node_types, downstream)
     findings += _check_conveyor_item_length(model, node_types, upstream)
     findings += _check_pallets(model, node_types, upstream)
 
