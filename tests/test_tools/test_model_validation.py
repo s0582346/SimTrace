@@ -331,6 +331,117 @@ def test_combiner_with_its_pallet_edge_first_is_quiet(model):
     assert "pallet_mismatch" not in checks(report["warnings"])
 
 
+# --- branch symmetry ------------------------------------------------------
+
+
+def parallel_line(model, second_branch_rejoins: bool) -> FactoryModel:
+    """One machine feeding two identical stations that then merge again.
+
+    With `second_branch_rejoins` False the second station is wired straight to
+    the sink, so items taking it skip the shared station downstream.
+    """
+    create_source("src", inter_arrival_time=1, blocking=True, model=model)
+    create_machine("split", processing_delay=1, out_edge_selection="ROUND_ROBIN",
+                   model=model)
+    create_machine("left", processing_delay=2, model=model)
+    create_machine("right", processing_delay=2, model=model)
+    create_machine("shared", processing_delay=1, model=model)
+    create_sink("snk", model=model)
+    for edge in ("b_in", "b_left", "b_right", "b_left_shared", "b_out"):
+        create_buffer(edge, capacity=5, model=model)
+    connect("b_in", "src", "split", model=model)
+    connect("b_left", "split", "left", model=model)
+    connect("b_right", "split", "right", model=model)
+    connect("b_left_shared", "left", "shared", model=model)
+    if second_branch_rejoins:
+        create_buffer("b_right_shared", capacity=5, model=model)
+        connect("b_right_shared", "right", "shared", model=model)
+    else:
+        create_buffer("b_bypass", capacity=5, model=model)
+        connect("b_bypass", "right", "snk", model=model)
+    connect("b_out", "shared", "snk", model=model)
+    return model
+
+
+def test_parallel_branches_that_rejoin_are_quiet(model):
+    parallel_line(model, second_branch_rejoins=True)
+
+    report = validate_model(model=model)
+
+    assert "branch_symmetry" not in checks(report["warnings"])
+
+
+def test_a_branch_that_skips_a_shared_station_is_warned_about(model):
+    parallel_line(model, second_branch_rejoins=False)
+
+    report = validate_model(model=model)
+
+    assert components(report["warnings"], "branch_symmetry") == {"split"}
+    message = next(
+        f["message"] for f in report["warnings"] if f["check"] == "branch_symmetry"
+    )
+    assert "'left'" in message and "'right'" in message and "'shared'" in message
+
+
+def test_the_skipped_branch_leaves_the_throughput_alone(model):
+    """Why this needs its own check: the item count does not move.
+
+    The bypassed station is not the bottleneck, so both wirings deliver the
+    same number of items. Nothing in a throughput figure can show the
+    difference.
+    """
+    from simtrace.tools.validation import verify_fixed_value
+
+    good = verify_fixed_value(until=400, warmup=200, model=parallel_line(
+        FactoryModel(), second_branch_rejoins=True))
+    bad = verify_fixed_value(until=400, warmup=200, model=parallel_line(
+        FactoryModel(), second_branch_rejoins=False))
+
+    assert good["passed"] and bad["passed"]
+    assert good["expected"]["total"] == bad["expected"]["total"]
+
+
+def test_a_splitter_may_send_its_branches_different_ways(model):
+    create_source("src", flow_item_type="pallet", inter_arrival_time=5,
+                  blocking=True, model=model)
+    create_splitter("unpack", processing_delay=1, model=model)
+    create_machine("finish", processing_delay=1, model=model)
+    create_sink("parts", model=model)
+    create_sink("empties", model=model)
+    for edge in ("b_in", "b_parts", "b_empties", "b_out"):
+        create_buffer(edge, capacity=5, model=model)
+    connect("b_in", "src", "unpack", model=model)
+    connect("b_parts", "unpack", "finish", model=model)
+    connect("b_out", "finish", "parts", model=model)
+    connect("b_empties", "unpack", "empties", model=model)
+
+    report = validate_model(model=model)
+
+    assert "branch_symmetry" not in checks(report["warnings"])
+
+
+def test_two_streams_meeting_at_a_shared_station_are_quiet(model):
+    """Fan-in is not fan-out: two sources with their own routes are fine."""
+    create_source("std", inter_arrival_time=2, blocking=True, model=model)
+    create_source("prem", inter_arrival_time=3, blocking=True, model=model)
+    create_machine("mill_std", processing_delay=2, model=model)
+    create_machine("mill_prem", processing_delay=2, model=model)
+    create_machine("assembly", processing_delay=1, model=model)
+    create_sink("snk", model=model)
+    for edge in ("b_std", "b_prem", "b_std_asm", "b_out"):
+        create_buffer(edge, capacity=5, model=model)
+    create_buffer("oven", capacity=5, delay=10, model=model)
+    connect("b_std", "std", "mill_std", model=model)
+    connect("b_prem", "prem", "mill_prem", model=model)
+    connect("b_std_asm", "mill_std", "assembly", model=model)
+    connect("oven", "mill_prem", "assembly", model=model)
+    connect("b_out", "assembly", "snk", model=model)
+
+    report = validate_model(model=model)
+
+    assert "branch_symmetry" not in checks(report["warnings"])
+
+
 # --- report shape ---------------------------------------------------------
 
 

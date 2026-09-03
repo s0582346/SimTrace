@@ -139,6 +139,46 @@ def test_conservation_folds_discards_into_the_balance(model):
     assert report["balanced"] is True
 
 
+def test_a_non_blocking_source_really_discards(model):
+    """A source told not to wait drops what does not fit, and the balance holds.
+
+    The line behind the source is far slower than the arrivals, so its input
+    buffer stays full for most of the run. A waiting source would throttle
+    itself to the line's pace; this one keeps generating and the overflow is
+    counted as discarded.
+    """
+    create_source("src", inter_arrival_time=1, blocking=False, model=model)
+    create_machine("slow", processing_delay=10, blocking=True, model=model)
+    create_sink("snk", model=model)
+    create_buffer("b1", capacity=1, model=model)
+    create_buffer("b2", capacity=1, model=model)
+    connect("b1", "src", "slow", model=model)
+    connect("b2", "slow", "snk", model=model)
+    run_simulation(200, seed=1, model=model)
+
+    report = verify_conservation(model=model)
+
+    assert report["discarded"] > 0
+    assert report["balanced"] is True
+
+
+def test_a_blocking_source_discards_nothing(model):
+    """The same line with a waiting source: it slows down instead of dropping."""
+    create_source("src", inter_arrival_time=1, blocking=True, model=model)
+    create_machine("slow", processing_delay=10, blocking=True, model=model)
+    create_sink("snk", model=model)
+    create_buffer("b1", capacity=1, model=model)
+    create_buffer("b2", capacity=1, model=model)
+    connect("b1", "src", "slow", model=model)
+    connect("b2", "slow", "snk", model=model)
+    run_simulation(200, seed=1, model=model)
+
+    report = verify_conservation(model=model)
+
+    assert report["discarded"] == 0
+    assert report["balanced"] is True
+
+
 # --- never ran ------------------------------------------------------------
 
 
