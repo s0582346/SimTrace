@@ -7,13 +7,13 @@ One is static and runs *before* a simulation:
     unconnected edges, Source-to-Sink reachability, and the parameter
     mismatches that only become visible once wiring is done.
 
-One is independent of the model altogether:
+One reads the model's own parameters back off a run:
 
-  - `fixed_value.verify_fixed_value` — "is the number right?" by replacing every
-    distribution with its mean, working out what that deterministic plant must
-    produce (`analytic.expected_throughput`), running it, and holding the two
-    against each other. The only check whose answer does not come from the
-    model.
+  - `extreme_conditions.verify_extreme_conditions` - "does a part spend at each
+    station the time that station was given?" by sending a single part through
+    copies of the model with every delay at its lower bound, as built, and at
+    its upper bound, and by holding every part of the last run against the
+    single part's total.
 
 The other two are dynamic and inspect what a *completed* run did:
 
@@ -29,9 +29,8 @@ and `validation.<tool>` keep working as a single tool surface.
 
 from __future__ import annotations
 
-from simtrace.tools.validation.analytic import expected_throughput
 from simtrace.tools.validation.conservation import verify_conservation
-from simtrace.tools.validation.fixed_value import verify_fixed_value
+from simtrace.tools.validation.extreme_conditions import verify_extreme_conditions
 from simtrace.tools.validation.item_flow import verify_item_flow
 from simtrace.tools.validation.model_check import validate_model
 
@@ -39,6 +38,5 @@ __all__ = [
     "validate_model",
     "verify_conservation",
     "verify_item_flow",
-    "verify_fixed_value",
-    "expected_throughput",
+    "verify_extreme_conditions",
 ]

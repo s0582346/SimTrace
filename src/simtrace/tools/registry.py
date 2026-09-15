@@ -511,63 +511,61 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
-    def verify_fixed_value(
+    def verify_extreme_conditions(
         until: float,
-        warmup: float | None = None,
-        tolerance: float = 0.01,
-        replication_means: dict[str, float] | None = None,
+        seed: int | None = None,
+        parts_per_source: int = 1,
+        sigmas: float = 3.0,
+        quantile: float = 0.99,
     ) -> dict:
-        """Check the model's throughput against one calculated independently.
+        """Check every station's time by sending a single part through the model.
 
-        The other checks ask whether the model agrees with itself. This one
-        produces a number the model had no hand in and holds it against that.
+        One part is released into a copy of the model, three times over: with
+        every delay distribution at its lower bound, with the model as built,
+        and with every delay at its upper bound. With one part in the plant
+        nothing queues, so the time it spends at a station is that station's own
+        time, and the report holds that against the value the station was given.
+        A part that waits where no waiting time was entered, a station that
+        takes longer than it was given, a time that can fall to zero, or a
+        distribution with no upper bound all surface here.
 
-        Every distribution is replaced by its mean, which turns the model into
-        a deterministic twin. What that twin must produce follows from the
-        wiring: each station's rate is its workplaces divided by its processing
-        time (a holding buffer's is its places divided by its holding time),
-        the smallest of those is the bottleneck, and the sources cap the result
-        from above. The twin is then run and the two numbers compared. A
-        mismatch means the plant is wired or parameterised differently from
-        how it was described — `expected.stations` names every rate so the
-        difference can be traced.
+        The times themselves are for the reader to judge against the real
+        plant: 38 minutes of hardening or 16 minutes of turning are numbers a
+        run at normal load never shows.
 
-        The session model is only read: its clock and its last `run_simulation`
-        stats are left alone for the other verify_* tools.
+        When the model has a finished run, its parts are measured too: per
+        station the fastest, the mean and the slowest, and every part's total
+        against the single part's total at the lower bound. That total is a
+        floor no part can beat, since waiting only adds to it — a part below it
+        skipped a station, and its route is named.
+
+        The session model is only read: its clock and its last run's stats are
+        left alone for the other verify_* tools.
 
         Args:
-            until: end time for the twin's run; must be a positive number. Give
-                it enough room that the line is full well before `warmup` — a
-                short run has too few departures to measure.
-            warmup: point from which departures are counted, so the filling of
-                the line does not drag the measured rate down. Defaults to half
-                of `until`.
-            tolerance: deviation allowed between the calculated and the
-                measured rate, as a share of the calculated one. 0.01 is right
-                for a deterministic line; it is never applied tighter than one
-                item's worth of the counting window.
-            replication_means: means from a `run_replications` batch of this
-                model, keyed as that tool reports them (e.g.
-                "snk.num_item_received"). The deterministic throughput is also
-                a ceiling for the stochastic one, so each mean is checked
-                against it. A mean above the ceiling is not believable.
+            until: end time for each of the three runs; must be a positive
+                number, long enough for a part to reach a sink at the upper
+                bound.
+            seed: RNG seed for the run at the built values.
+            parts_per_source: items each source releases at time 0. Keep it at
+                1 so nothing queues; raise it only when a combiner needs
+                several items per cycle, and read the times as including
+                waiting.
+            sigmas: how far a normal/gauss reaches each way, in standard
+                deviations. 3 covers all but about 3 draws in 1000.
+            quantile: stands in for an exp's missing upper bound.
 
-        Returns a dict with `summary` (read this first), `passed`,
-        `applicable`, `blockers`, `expected` (calculated rates, the station
-        table with the arithmetic behind each rate, and the bottleneck),
-        `measured`, `comparison`, `upper_bound`, `substitutions` (every
-        distribution that was replaced), `warnings` and `settings`.
-
-        When `applicable` is false no expected value could be stated — a fleet
-        on the route, a loop in the wiring, or a splitter whose pallets cannot
-        be counted. Report that rather than quoting the twin's output as if it
-        had been checked.
+        Returns a dict with `summary` (read this first), `passed`, `stations`
+        (per place: the value entered, the three measured times, the run's
+        fastest/mean/slowest), `single`, `run`, `below_floor`, `findings`,
+        `substitutions` and `settings`.
         """
-        return validation.verify_fixed_value(
+        return validation.verify_extreme_conditions(
             until=until,
-            warmup=warmup,
-            tolerance=tolerance,
-            replication_means=replication_means,
+            seed=seed,
+            parts_per_source=parts_per_source,
+            sigmas=sigmas,
+            quantile=quantile,
         )
 
     @mcp.tool()

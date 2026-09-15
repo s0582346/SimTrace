@@ -9,10 +9,6 @@ string parsed into a zero-arg sampler:
     exp(x)          -> random.expovariate(1 / x)   (mean x, not rate)
 
 Every sampler is clamped non-negative (`max(0.0, sample)`).
-
-`mean_of` goes the other way: it returns a spec's mean instead of a draw from
-it, which is how the fixed-value test turns a stochastic model into a
-deterministic one.
 """
 
 from __future__ import annotations
@@ -132,52 +128,3 @@ def spec_parts(value: object) -> tuple[str, float, float | None] | None:
         float(match.group("a")),
         float(b) if b is not None else None,
     )
-
-
-def mean_of(name: str, value: DelaySpec) -> float:
-    """Return the mean of a delay param: the constant, or the distribution's mean.
-
-    uniform(a, b) -> (a + b) / 2, normal(m, s) and gauss(m, s) -> m,
-    exp(x) -> x. This is the substitution the fixed-value test makes to turn a
-    stochastic model into a deterministic one.
-
-    The samplers clamp at zero, so the mean returned for a normal whose mean
-    sits within about three standard deviations of zero is below the mean the
-    clamped sampler actually draws. `spec_parts` exposes the arguments for
-    callers that report that.
-
-    Args:
-        name: parameter name, used in error messages.
-        value: a constant int/float or a distribution string.
-
-    Raises:
-        ValueError: if `value` is neither a number nor a well-formed
-            distribution string.
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        raise ValueError(
-            f"{name} must be a constant int/float or a distribution string "
-            f"(got {value!r})."
-        )
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    parts = spec_parts(value)
-    if parts is None:
-        raise ValueError(
-            f"{name}: invalid distribution string {value!r}. Expected one of "
-            "uniform(a, b), normal(m, s), gauss(m, s), exp(x)."
-        )
-
-    dist, a, b = parts
-    if dist == "uniform":
-        if b is None:
-            raise ValueError(f"{name}: uniform(a, b) needs two args.")
-        return (a + b) / 2.0
-    if dist in ("normal", "gauss"):
-        return a
-    if dist == "exp":
-        return a
-
-    # Unreachable: _SPEC_RE only matches the names handled above.
-    raise ValueError(f"{name}: unsupported distribution {dist!r}.")

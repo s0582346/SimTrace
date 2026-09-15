@@ -383,22 +383,22 @@ def test_a_branch_that_skips_a_shared_station_is_warned_about(model):
     assert "'left'" in message and "'right'" in message and "'shared'" in message
 
 
-def test_the_skipped_branch_leaves_the_throughput_alone(model):
+def test_the_skipped_branch_leaves_the_throughput_alone():
     """Why this needs its own check: the item count does not move.
 
-    The bypassed station is not the bottleneck, so both wirings deliver the
-    same number of items. Nothing in a throughput figure can show the
-    difference.
+    The bypassed station is not the bottleneck, so over a run of 400 both
+    wirings deliver 395 items, give or take the one that the shorter route
+    gets to the sink before the clock stops. Nothing in a throughput figure
+    can show the difference.
     """
-    from simtrace.tools.validation import verify_fixed_value
-
-    good = verify_fixed_value(until=400, warmup=200, model=parallel_line(
+    good = run_simulation(400, model=parallel_line(
         FactoryModel(), second_branch_rejoins=True))
-    bad = verify_fixed_value(until=400, warmup=200, model=parallel_line(
+    bad = run_simulation(400, model=parallel_line(
         FactoryModel(), second_branch_rejoins=False))
 
-    assert good["passed"] and bad["passed"]
-    assert good["expected"]["total"] == bad["expected"]["total"]
+    delivered = good["nodes"]["snk"]["num_item_received"]
+    bypassed = bad["nodes"]["snk"]["num_item_received"]
+    assert abs(delivered - bypassed) <= 1
 
 
 def test_a_splitter_may_send_its_branches_different_ways(model):
