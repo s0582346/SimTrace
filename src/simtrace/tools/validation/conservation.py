@@ -1,10 +1,10 @@
 """Post-run material balance: report where every generated item ended up.
 
-`verify_conservation` reads the nodes' and edges' ground-truth item counters and
-reports the run's material balance — delivered, discarded, still in edges, still
-in stations — with plain findings on what those numbers show. It gives no
-pass/fail verdict. See `architecture/conservation.md` for why a verdict would be
-vacuous and what the numbers can and cannot reveal.
+`verify_conservation` reads the nodes' and edges' item counters, counts what sits
+inside the nodes directly, and checks that the four places add up to what the
+sources generated. Alongside the check it reports the split itself — delivered,
+discarded, still in edges, still in stations — with plain findings on what those
+numbers show. See `architecture/conservation.md`.
 """
 
 from __future__ import annotations
@@ -39,21 +39,21 @@ def _counter(node: object, field: str) -> int:
     return value if isinstance(value, int) else 0
 
 
-def _station_capacity(model: FactoryModel) -> int:
-    """Return how many items can sit inside nodes at one moment.
+def _items_in_nodes(model: FactoryModel) -> int:
+    """Count the items held inside nodes right now, directly.
 
-    A machine holds one item per worker thread, so `work_capacity` items, and a
-    source holds at most the one item it generated but could not hand over yet.
-    Sinks hold nothing. The result is an upper bound on a run's genuine
-    machine WIP, which is what makes an oversized residual readable as loss.
+    A machine keeps one worker process per item it is working on or waiting to
+    hand over, and lists them in `worker_thread_list`. A source that generated an
+    item it could not hand over yet is in BLOCKED_STATE and holds that one item.
+    Sinks hold nothing. Splitters and combiners are left out because the caller
+    declines to count on lines that contain them.
     """
     total = 0
     for node in model.nodes.values():
         node_type = type(node).__name__
         if node_type == "Machine":
-            capacity = getattr(node, "work_capacity", 1)
-            total += capacity if isinstance(capacity, int) and capacity > 0 else 1
-        elif node_type == "Source":
+            total += len(node.worker_thread_list)
+        elif node_type == "Source" and getattr(node, "state", None) == "BLOCKED_STATE":
             total += 1
     return total
 
@@ -68,7 +68,7 @@ def _findings(
     in_edges: int,
     in_machines: int | None,
     discarded: int,
-    station_capacity: int | None,
+    missing: int | None,
     packing_nodes: list[str],
     by_node: dict[str, dict],
 ) -> list[dict[str, str]]:
@@ -80,24 +80,23 @@ def _findings(
     """
     findings: list[dict[str, str]] = []
 
-    if in_machines is not None and station_capacity is not None:
-        if in_machines < 0:
+    if missing:
+        if missing > 0:
+            findings.append({
+                "kind": "missing",
+                "text": (
+                    f"{missing} of {generated} generated items are missing. They "
+                    "did not reach a sink, are in no edge, in no station and were "
+                    "not discarded, so they were lost inside the simulation."
+                ),
+            })
+        else:
             findings.append({
                 "kind": "impossible",
                 "text": (
-                    f"{-in_machines} more items were accounted for than were "
+                    f"{-missing} more items were accounted for than were "
                     "generated. Items cannot appear from nowhere, so this points "
                     "at a fault in the simulation rather than in the model."
-                ),
-            })
-        elif in_machines > station_capacity:
-            findings.append({
-                "kind": "unaccounted",
-                "text": (
-                    f"{in_machines} items are left over once deliveries, edge "
-                    "contents and discards are subtracted, but the stations can "
-                    f"hold at most {station_capacity} items at once. At least "
-                    f"{in_machines - station_capacity} items went missing."
                 ),
             })
 
@@ -116,12 +115,11 @@ def _findings(
 
     unfinished = in_edges + (in_machines or 0)
     if unfinished:
-        if in_machines is None:
-            inside = f"{in_edges} in edges"
-        elif station_capacity is not None and in_machines > station_capacity:
-            inside = f"{in_edges} in edges and {in_machines} left over"
-        else:
-            inside = f"{in_edges} in edges and {in_machines} in stations"
+        inside = (
+            f"{in_edges} in edges"
+            if in_machines is None
+            else f"{in_edges} in edges and {in_machines} in stations"
+        )
         findings.append({
             "kind": "unfinished",
             "text": (
@@ -137,8 +135,8 @@ def _findings(
             "kind": "not_countable",
             "text": (
                 f"{', '.join(packing_nodes)} pack or unpack items, so the number "
-                "of physical items changes there. Items inside stations cannot be "
-                "derived, and counts taken before and after these nodes are not "
+                "of physical items changes there. Items inside stations are not "
+                "counted, and counts taken before and after these nodes are not "
                 "comparable."
             ),
         })
@@ -153,19 +151,20 @@ def _summary(
     in_edges: int,
     in_machines: int | None,
     discarded: int,
-    station_capacity: int | None,
+    missing: int | None,
 ) -> str:
     """State where every generated item ended up, in one sentence."""
     parts = [f"{received} reached a sink"]
     if discarded:
         parts.append(f"{discarded} were discarded")
     parts.append(f"{in_edges} are in edges")
-    if in_machines is None:
-        parts.append("the number inside stations is unknown")
-    elif station_capacity is not None and in_machines > station_capacity:
-        parts.append(f"{in_machines} are left over, more than the stations can hold")
-    else:
-        parts.append(f"{in_machines} are in stations")
+    parts.append(
+        f"{in_machines} are in stations"
+        if in_machines is not None
+        else "the number inside stations is unknown"
+    )
+    if missing:
+        parts.append(f"{missing} are missing" if missing > 0 else "the sum is too large")
     return f"Of {generated} items generated, " + ", ".join(parts) + "."
 
 
@@ -192,31 +191,33 @@ def _edge_level(edge: object) -> int:
 def verify_conservation(*, model: FactoryModel | None = None) -> dict:
     """Reconcile every generated item against where it ended up.
 
-    Mass-balances the last run against the identity
+    Splits the items all Sources generated into four places and checks that they
+    add up:
 
         generated == received + in_edges + in_machines + discarded
 
-    where `generated`, `received`, `discarded`, and `in_edges` are read from
-    ground-truth counters and live edge levels, and `in_machines` is derived as
-    the residual (there is no machine-WIP counter):
+    `generated`, `received` and `discarded` are ground-truth counters, `in_edges`
+    is the live level of every edge, and `in_machines` is counted directly from
+    the nodes (each machine's running workers plus a source holding an item it
+    could not hand over). Because none of the four is derived from the others,
+    the identity can fail:
 
-        in_machines = generated - received - in_edges - discarded
+        missing = generated - (received + in_edges + in_machines + discarded)
+
+    A positive `missing` means items were lost inside the simulation, a negative
+    one that items appeared from nowhere. A model built through the tools cannot
+    produce either, since every node counts what it drops, so a non-zero value
+    points at a fault in the simulation rather than at the model. What a model
+    can show is the split itself, which `findings` describes: items dropped at
+    non-blocking nodes, and how much never left the line.
 
     Requires a prior `run_simulation` (a model whose clock is still at 0 raises).
 
-    Because `in_machines` is the residual, the identity closes by construction,
-    so there is no pass/fail verdict to give: lost items are absorbed by the
-    residual instead of breaking the sum. What the residual can be measured
-    against is `station_capacity`, the number of items the nodes can hold at
-    once — a residual above it means items went missing, and a negative one
-    means items appeared from nowhere. Both are reported in `findings`.
-
     A Splitter or Combiner emits a different number of physical items than it
     consumed (it un/re-packs pallets) and its consumed-count is not recorded, so
-    the residual conflates machine WIP with that unknown delta. When the model
-    contains any such node, `in_machines` and `station_capacity` are reported as
-    None, `exact` is False, and the offending node ids are listed in
-    `packing_nodes`. For lines without a Splitter or Combiner the check is exact.
+    the items inside nodes cannot be compared with the counters. When the model
+    contains any such node, `in_machines` and `missing` are reported as None,
+    `exact` is False, and the offending node ids are listed in `packing_nodes`.
 
     Returns a summary dict:
         {
@@ -226,11 +227,11 @@ def verify_conservation(*, model: FactoryModel | None = None) -> dict:
           "in_edges": int,           # flow-item objects still inside buffers/
                                      # conveyors/fleets (a Pallet = 1, its packed
                                      # contents are not counted)
-          "in_machines": int,        # items still being processed (derived residual)
+          "in_machines": int,        # items held inside nodes, counted directly
+                                     # (None if not exact)
           "discarded": int,          # items dropped at non-blocking nodes
           "accounted": int,          # received + in_edges + in_machines + discarded
-          "station_capacity": int,   # items all nodes can hold at once (None if
-                                     # not exact); the residual's upper bound
+          "missing": int,            # generated - accounted (None if not exact)
           "exact": bool,             # False when packing nodes make it inexact
           "packing_nodes": [id,...], # splitter/combiner ids that break exactness
           "summary": str,            # where every generated item ended up
@@ -281,50 +282,47 @@ def verify_conservation(*, model: FactoryModel | None = None) -> dict:
     by_edge = {edge_id: _edge_level(edge) for edge_id, edge in model.edges.items()}
     in_edges = sum(by_edge.values())
 
-    # No counter for machine WIP, so derive it as the residual: whatever wasn't
-    # delivered, left in an edge, or discarded is still mid-process at the cutoff.
-    in_machines = generated - received - in_edges - discarded
-
     exact = not packing_nodes
+    in_machines: int | None
+    missing: int | None
     if exact:
-        in_machines_reported: int | None = in_machines
-        station_capacity: int | None = _station_capacity(model)
+        in_machines = _items_in_nodes(model)
+        missing = generated - (received + in_edges + in_machines + discarded)
     else:
         # A splitter/combiner changed the physical item count by an amount we
-        # can't read from counters, so the residual conflates real WIP with the
-        # packing delta, and no bound on it is meaningful.
-        in_machines_reported = None
-        station_capacity = None
+        # can't read from counters, so what sits inside nodes can't be compared.
+        in_machines = None
+        missing = None
 
     accounted = received + in_edges + discarded
-    if in_machines_reported is not None:
-        accounted += in_machines_reported
+    if in_machines is not None:
+        accounted += in_machines
 
     return {
         "now": model.env.now,
         "generated": generated,
         "received": received,
         "in_edges": in_edges,
-        "in_machines": in_machines_reported,
+        "in_machines": in_machines,
         "discarded": discarded,
         "accounted": accounted,
-        "station_capacity": station_capacity,
+        "missing": missing,
         "exact": exact,
         "packing_nodes": packing_nodes,
         "summary": _summary(
             generated=generated,
             received=received,
             in_edges=in_edges,
-            in_machines=in_machines_reported,
+            in_machines=in_machines,
             discarded=discarded,
-            station_capacity=station_capacity,
+            missing=missing,
         ),
         "findings": _findings(
             generated=generated,
             in_edges=in_edges,
-            in_machines=in_machines_reported,
+            in_machines=in_machines,
             discarded=discarded,
-            station_capacity=station_capacity,
+            missing=missing,
             packing_nodes=packing_nodes,
             by_node=by_node,
         ),

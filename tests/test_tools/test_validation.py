@@ -53,8 +53,8 @@ def test_conservation_balances_on_working_line(line):
     report = verify_conservation(model=line)
 
     assert report["exact"] is True
-    # The residual fits inside the stations, so nothing went missing.
-    assert 0 <= report["in_machines"] <= report["station_capacity"]
+    # in_machines is counted, not derived, so a zero here is a real result.
+    assert report["missing"] == 0
     # Nothing goes missing: the four buckets sum back to what was generated.
     assert report["accounted"] == report["generated"]
     assert (
@@ -77,7 +77,7 @@ def test_conservation_reports_wip_where_it_sits(line):
     # Generation happened and some items were delivered.
     assert report["generated"] > 0
     assert report["received"] > 0
-    # in_machines is the non-negative residual (items mid-process, not lost).
+    # in_machines is counted directly: the machine holds an item at the cutoff.
     assert report["in_machines"] >= 0
 
 
@@ -118,24 +118,24 @@ def test_conservation_folds_discards_into_the_balance(model):
     connect("b2", "mac", "snk", model=model)
     run_simulation(20, model=model)
 
-    # Build an internally consistent end state on top of whatever WIP the run
-    # left in the edges: generated = received + in_edges + discarded, with no
-    # item mid-process. Reading the live edge levels keeps the balance exact
-    # regardless of how many items the short run happened to leave in b1/b2.
+    # Build an internally consistent end state on top of whatever the run left
+    # in the edges and in the machine: generated = received + in_edges +
+    # in_machines + discarded. Reading the live counts keeps the balance exact
+    # regardless of how many items the short run happened to leave behind.
     report0 = verify_conservation(model=model)
     in_edges = report0["in_edges"]
-    model.nodes["src"].stats["num_item_generated"] = in_edges + 10
+    in_machines = report0["in_machines"]
+    model.nodes["src"].stats["num_item_generated"] = in_edges + in_machines + 10
     model.nodes["mac"].stats["num_item_processed"] = 6
     model.nodes["mac"].stats["num_item_discarded"] = 4
     model.nodes["snk"].stats["num_item_received"] = 6
 
     report = verify_conservation(model=model)
-    assert report["generated"] == in_edges + 10
+    assert report["generated"] == in_edges + in_machines + 10
     assert report["received"] == 6
     assert report["discarded"] == 4
-    # generated - received - in_edges - discarded == 0: no items mid-process,
-    # and the 4 discards are folded into the accounting rather than lost.
-    assert report["in_machines"] == 0
+    # The 4 discards are folded into the accounting rather than lost.
+    assert report["missing"] == 0
     assert report["accounted"] == report["generated"]
 
 
@@ -182,25 +182,49 @@ def test_a_blocking_source_discards_nothing(model):
     assert not [f for f in report["findings"] if f["kind"] == "discarded"]
 
 
-def test_a_residual_larger_than_the_stations_reads_as_loss(line):
-    """Items that vanish hide in the residual, so it is checked against capacity.
+def test_lost_items_are_counted_exactly(line):
+    """Items that vanish without being counted show up as `missing`.
 
     The run is consistent, then 20 items are added to the source's generated
-    count without arriving anywhere — the signature of items lost in flight.
-    The sum still closes, which is why the finding rests on the residual being
-    larger than everything the stations can hold.
+    count without arriving anywhere: the signature of items lost in flight.
+    Because the items inside nodes are counted directly, the sum no longer
+    closes and the gap is exactly the number lost.
     """
     run_simulation(20, model=line)
     before = verify_conservation(model=line)
+    assert before["missing"] == 0
     line.nodes["src"].stats["num_item_generated"] = before["generated"] + 20
 
     report = verify_conservation(model=line)
 
-    assert report["in_machines"] > report["station_capacity"]
-    assert report["accounted"] == report["generated"]
-    missing = [f for f in report["findings"] if f["kind"] == "unaccounted"]
-    assert len(missing) == 1
-    assert str(report["station_capacity"]) in missing[0]["text"]
+    assert report["missing"] == 20
+    assert report["accounted"] == report["generated"] - 20
+    lost = [f for f in report["findings"] if f["kind"] == "missing"]
+    assert len(lost) == 1
+    assert "20 of" in lost[0]["text"]
+
+
+def test_items_from_nowhere_read_as_impossible(line):
+    run_simulation(20, model=line)
+    before = verify_conservation(model=line)
+    line.nodes["src"].stats["num_item_generated"] = before["generated"] - 3
+
+    report = verify_conservation(model=line)
+
+    assert report["missing"] == -3
+    assert [f for f in report["findings"] if f["kind"] == "impossible"]
+
+
+def test_a_vanished_item_in_an_edge_is_found(line):
+    """The same loss made physical, by taking an item out of a buffer unseen."""
+    run_simulation(20, model=line)
+    store = line.edges["b1"].inbuiltstore
+    assert store.ready_items or store.items, "the source outruns the machine"
+    (store.ready_items or store.items).pop()
+
+    report = verify_conservation(model=line)
+
+    assert report["missing"] == 1
 
 
 def test_findings_are_plain_entries_and_summary_names_the_numbers(line):
@@ -248,7 +272,7 @@ def test_conservation_inexact_with_combiner(model):
     report = verify_conservation(model=model)
     assert report["exact"] is False
     assert report["in_machines"] is None
-    assert report["station_capacity"] is None
+    assert report["missing"] is None
     assert "cmb" in report["packing_nodes"]
     assert [f for f in report["findings"] if f["kind"] == "not_countable"]
     # The observable terms are still reported for inspection.
@@ -270,7 +294,7 @@ def test_conservation_reflects_only_the_last_run(line):
     # The clock advanced and more items were generated by the wider window.
     assert second["now"] == 20
     assert second["generated"] >= first["generated"]
-    assert second["in_machines"] <= second["station_capacity"]
+    assert second["missing"] == 0
 
 
 # =========================================================================

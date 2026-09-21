@@ -571,19 +571,18 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     @mcp.tool()
     @traced
     def verify_conservation() -> dict:
-        """Report where every item of the last run ended up.
+        """Check that every item of the last run is accounted for, and say where.
 
         Splits the items all Sources generated into those received by Sinks,
-        those still in edges, those still in stations and those discarded, and
-        states in `summary` and `findings` what those numbers show. There is no
-        pass/fail verdict: `in_machines` is a residual, so the balance closes
-        whatever happens. Read `findings` instead — it names discarded items (a
-        non-blocking node dropping work), how much never left the line (a run too
-        short or a line congested), and a residual above `station_capacity`
-        (items went missing). Requires a prior run_simulation. Splitters and
-        combiners change the physical item count, so on those lines
-        `in_machines` is null, `exact` is false and they are named in
-        `packing_nodes`.
+        those still in edges, those still in stations (counted directly) and
+        those discarded, and checks that the four add up. `missing` is the gap:
+        positive means items were lost inside the simulation, negative that items
+        appeared from nowhere. `summary` and `findings` state what the numbers
+        show, including items dropped at a non-blocking node and how much of the
+        run's output never left the line (a run too short or a line congested).
+        Requires a prior run_simulation. Splitters and combiners change the
+        physical item count, so on those lines `in_machines` and `missing` are
+        null, `exact` is false and they are named in `packing_nodes`.
         """
         return validation.verify_conservation()
 
