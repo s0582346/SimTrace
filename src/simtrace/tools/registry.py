@@ -571,14 +571,18 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     @mcp.tool()
     @traced
     def verify_conservation() -> dict:
-        """Reconcile every generated item against where it ended up.
+        """Report where every item of the last run ended up.
 
-        Mass-balances the last run: items all Sources generated must equal items
-        received by Sinks + items still in edges (WIP) + items still in machines
-        + items discarded. A mismatch means items were lost or created — the
-        alarm to raise. Requires a prior run_simulation. Exact for lines without
-        splitters/combiners; those change the physical item count, so the check
-        reports `balanced: null` / `exact: false` and names them in
+        Splits the items all Sources generated into those received by Sinks,
+        those still in edges, those still in stations and those discarded, and
+        states in `summary` and `findings` what those numbers show. There is no
+        pass/fail verdict: `in_machines` is a residual, so the balance closes
+        whatever happens. Read `findings` instead — it names discarded items (a
+        non-blocking node dropping work), how much never left the line (a run too
+        short or a line congested), and a residual above `station_capacity`
+        (items went missing). Requires a prior run_simulation. Splitters and
+        combiners change the physical item count, so on those lines
+        `in_machines` is null, `exact` is false and they are named in
         `packing_nodes`.
         """
         return validation.verify_conservation()

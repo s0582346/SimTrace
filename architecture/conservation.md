@@ -33,8 +33,11 @@ amount spread across those four places:
 
 > **made  =  delivered  +  waiting  +  being worked on  +  thrown away**
 
-If the two sides match, every item is accounted for. If they don't, items went
-missing or appeared from nowhere — and that is the alarm to raise.
+That identity is the frame, not a test. What is **being worked on** is never
+counted directly — it is taken as the leftover — so the two sides always match
+and a pass/fail verdict would be vacuous. The check therefore reports the four
+numbers and says what they show: what was thrown away, how much never left the
+line, and whether the leftover is larger than the stations could possibly hold.
 
 ## The check, in full
 
@@ -60,15 +63,16 @@ flowchart TD
     cmp -->|sum is larger| moreA(["items appeared from nowhere —<br/>raise the alarm"])
 
     seen -->|no| left["take the leftover:<br/>made, minus the three we can see"]
-    left --> neg{"is that leftover<br/>below zero?"}
-    neg -->|yes| moreB(["more counted than was made —<br/>impossible: raise the alarm"])
-    neg -->|no| okB(["consistent — but read the caveat below:<br/>a silent loss could hide in this leftover"])
+    left --> neg{"how big is<br/>that leftover?"}
+    neg -->|below zero| moreB(["more counted than was made —<br/>impossible: raise the alarm"])
+    neg -->|"more than the stations can hold"| lostB(["items went missing —<br/>the leftover cannot be work in progress"])
+    neg -->|"fits in the stations"| okB(["consistent — a small loss could still<br/>hide in this leftover"])
 
     classDef ok fill:#e6f4ea,stroke:#137333,color:#0b3d1f;
     classDef alarm fill:#fce8e6,stroke:#c5221f,color:#5c0d0a;
     classDef caution fill:#fef7e0,stroke:#b06000,color:#4d2c00;
     class okA,okB ok;
-    class lost,moreA,moreB alarm;
+    class lost,moreA,moreB,lostB alarm;
     class mixedout caution;
 ```
 
@@ -87,9 +91,14 @@ Made-up items and missing items are **not** equally easy to catch.
   like normal work still on the bench. The books balance, but only because the
   missing item was silently reclassified rather than found.
 
-So a clean pass means *consistent*, which is not quite the same as *nothing was
-lost*. The stronger guarantee needs an independent count of what is on the bench,
-not a leftover.
+So *consistent* is not the same as *nothing was lost*. The stronger guarantee
+needs something independent of the leftover. There is no counter for what is on
+the bench, but there is a ceiling on it: a station can hold one item per worker,
+and a source at most the one item it could not hand over yet. Add those up and
+you get the most items that can be inside stations at any moment. A leftover
+above that ceiling cannot be work in progress, so those items are missing. A
+leftover below it stays ambiguous, which is why the check reports the ceiling
+alongside the leftover instead of turning it into a verdict.
 
 ## When a simple head-count isn't enough
 
@@ -101,11 +110,11 @@ stations honour that. But some deliberately change how many items there are:
 
 Where that happens, a plain head-count can't be reconciled: the very same goods
 are counted as one number before the station and a different number after it.
-Rather than guess, the check declines a clean verdict and names the stations
-responsible. For lines with no bundling or unbundling, it gives a definite
-answer.
+Rather than guess, the check reports neither a leftover nor a ceiling for such
+lines and names the stations responsible, so a reader knows that counts taken
+before and after them are not comparable.
 
 ---
 
 *The concept behind the `verify_conservation` check in
-`src/simtrace/tools/validation.py`.*
+`src/simtrace/tools/validation/conservation.py`.*
