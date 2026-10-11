@@ -24,6 +24,7 @@ from factorysimpy.nodes.source import Source
 from factorysimpy.nodes.splitter import Splitter
 
 from simtrace.model import FactoryModel, get_model
+from simtrace.tools.builders.part_types import resolve_part_type
 from simtrace.tools.utils import require_number, resolve_delay
 
 
@@ -35,15 +36,18 @@ def create_source(
     blocking: bool = False,
     out_edge_selection: str = "FIRST_AVAILABLE",
     node_setup_time: float = 0,
+    part_type: str | None = None,
+    attributes: dict[str, str | int | float | bool] | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
     """Create a Source node and register it in the shared model.
 
     A Source generates flow items and has no in_edges and exactly one out_edge
-    (wired later). Items cannot carry a type or attributes: a product mix is
-    modeled as one Source per type, with the overall mean inter-arrival time
-    divided by the type's mix fraction.
+    (wired later). A product mix is modeled as one Source per type, with the
+    overall mean inter-arrival time divided by the type's mix fraction. With
+    `part_type` set, every item the Source releases carries the type name and
+    `attributes` in its payload; routing still follows the graph only.
     Args:
         id: unique node identifier.
         inter_arrival_time: time between item generations. Either a constant
@@ -59,6 +63,11 @@ def create_source(
         out_edge_selection: edge-selection strategy, one of "FIRST_AVAILABLE",
             "RANDOM", "ROUND_ROBIN".
         node_setup_time: constant initial setup delay.
+        part_type: type name stamped on every item, or None for untyped
+            items. Sources may share a name; the report counts them together.
+        attributes: needs a part_type. Attribute name -> fixed value (a
+            string, number or bool), stamped unchanged on every item. The name
+            "part_type" is reserved.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -68,6 +77,7 @@ def create_source(
         raise ValueError("id must be a non-empty string.")
     if model.has_node(id):
         raise ValueError(f"A node with id '{id}' already exists.")
+    resolved_attributes = resolve_part_type(part_type, attributes)
 
     resolved_iat = resolve_delay("inter_arrival_time", inter_arrival_time)
     require_number("item_length", item_length)
@@ -91,6 +101,9 @@ def create_source(
     # Source.__init__ doesn't forward node_setup_time to the base Node, so set it
     # explicitly (validated above).
     node.node_setup_time = node_setup_time
+    # Read by connect, which stamps the items on this Source's out-edges.
+    node.part_type = part_type
+    node.part_attributes = resolved_attributes
 
     model.add_node(id, node)
     model.record(
@@ -103,6 +116,8 @@ def create_source(
             "blocking": blocking,
             "out_edge_selection": out_edge_selection,
             "node_setup_time": node_setup_time,
+            "part_type": part_type,
+            "attributes": attributes,
         },
     )
 
@@ -115,6 +130,8 @@ def create_source(
         "blocking": blocking,
         "out_edge_selection": out_edge_selection,
         "node_setup_time": node_setup_time,
+        "part_type": part_type,
+        "attributes": attributes,
         "in_edges": 0,
         "out_edges": 0,
     }

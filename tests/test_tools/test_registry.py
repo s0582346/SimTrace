@@ -162,7 +162,8 @@ def test_server_exposes_modeling_instructions():
     assert instructions
     assert "one Source per type" in instructions
     assert "connect order" in instructions
-    assert "NO type/attributes" in instructions
+    assert "part_type=" in instructions
+    assert "never change where an item goes" in instructions
 
 
 def test_tool_descriptions_carry_decision_point_hints():

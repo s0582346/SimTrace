@@ -30,15 +30,16 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         blocking: bool = False,
         out_edge_selection: str = "FIRST_AVAILABLE",
         node_setup_time: float = 0,
+        part_type: str | None = None,
+        attributes: dict[str, str | int | float | bool] | None = None,
     ) -> dict:
         """Create a Source node that generates flow items into the model.
 
         A Source has no in_edges and exactly one out_edge (wired later via
-        connect). Items cannot carry a type or attributes: to model a product
-        mix, create one Source per type and divide the overall mean
-        inter-arrival time by the type's mix fraction (e.g. arrivals every
-        8 min with a 60/40 mix -> two Sources with "exp(13.33)" and "exp(20)"
-        — never the fraction itself as the exp argument).
+        connect). To model a product mix, create one Source per type and
+        divide the overall mean inter-arrival time by the type's mix fraction
+        (e.g. arrivals every 8 min with a 60/40 mix -> two Sources with
+        "exp(13.33)" and "exp(20)"). Give each Source a part_type to tag its items.
 
         Args:
             id: unique node identifier.
@@ -56,6 +57,16 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             out_edge_selection: edge-selection strategy, one of
                 "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
             node_setup_time: constant initial setup delay.
+            part_type: type name stamped on every item this Source
+                releases. run_simulation then reports, per type, the generated
+                and completed item counts and the sum of every numeric
+                attribute over the completed items. Routing still follows the
+                graph only.
+            attributes: needs a part_type. A dict of extra properties stamped
+                on every item this Source releases, e.g.
+                {"family": "B", "price": 160}. Each value is fixed: a string,
+                number or bool, the same for every item. Distributions are
+                not allowed here. The key "part_type" is reserved.
         """
         return builders.create_source(
             id=id,
@@ -65,6 +76,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             blocking=blocking,
             out_edge_selection=out_edge_selection,
             node_setup_time=node_setup_time,
+            part_type=part_type,
+            attributes=attributes,
         )
 
     @mcp.tool()

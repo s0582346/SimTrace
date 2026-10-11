@@ -10,8 +10,12 @@ Discrete-event material-flow simulation tools (FactorySimPy): active nodes
 (source/machine/splitter/combiner/sink) wired by passive edges
 (buffer/conveyor/fleet), then run and verify.
 
-Modeling patterns items carry NO type/attributes. Encode everything in the
-graph structure:
+Modeling patterns. Routing, priority and processing times are encoded in the
+graph structure only:
+- Part types: create_source(part_type=<name>, attributes={...}) stamps the
+  type and its attributes on every item the Source releases. Attributes are
+  for reporting (run_simulation returns per-type counts and attribute sums);
+  they never change where an item goes.
 - Every node-to-node hop needs an edge. A bare hand-off is a buffer with
   capacity=1, delay=0.
 - Product mix: one Source per type; inter_arrival_time = overall mean / mix

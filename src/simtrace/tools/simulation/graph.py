@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
+from simtrace.tools.builders.part_types import tag_source_edge
 from simtrace.tools.telemetry import traced_stdout
 
 
@@ -65,6 +66,9 @@ def connect(
     dest = model.nodes[dest_id]
     with traced_stdout():
         edge.connect(src, dest)
+
+    if getattr(src, "part_type", None) is not None:
+        tag_source_edge(model, edge, src)
 
     # Call order is load-bearing: "FIRST_AVAILABLE" drains in-edges in connect
     # order, so replaying out of order would silently change routing priority.

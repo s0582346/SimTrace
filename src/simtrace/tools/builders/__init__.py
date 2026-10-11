@@ -10,6 +10,7 @@ them later.
     that generate, process, and consume flow items.
   - `edges` — the passive components (Buffer, Conveyor, Fleet) that hold and
     move flow items between two nodes.
+  - `part_types` — stamps a Source's part type and attributes onto its items.
 
 This package re-exports every builder so `from simtrace.tools.builders import
 create_source, ...` and `builders.create_source` work as a single surface.

@@ -18,6 +18,7 @@ import random
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
 from simtrace.model import reset_model as reset_session_model
+from simtrace.tools.builders.part_types import part_type_names, part_type_report
 from simtrace.tools.telemetry import build_item_paths, traced_stdout
 from simtrace.tools.utils import require_positive_number
 
@@ -70,6 +71,9 @@ def run_simulation(
             run exactly. Note it seeds process-global state.
 
     Returns a summary dict with the end time, the seed, and per-node/edge stats.
+    When a Source has a part type, it also holds `part_types`: per type
+    the generated and completed item counts and, over the completed items, the
+    sum of every numeric attribute.
     """
     model = model if model is not None else get_session_model()
 
@@ -89,6 +93,7 @@ def run_simulation(
     # built in one pass afterwards rather than accumulated as the run streams.
     model.events.clear()
     model.item_paths.clear()
+    model.item_attributes.clear()
     with traced_stdout(collector=model.events):
         model.env.run(until=until)
     model.item_paths.update(build_item_paths(model.events, model.edges.keys()))
@@ -101,10 +106,13 @@ def run_simulation(
         edge_id: getattr(edge, "stats", None)
         for edge_id, edge in model.edges.items()
     }
-    return {
+    summary = {
         "until": until,
         "seed": seed,
         "now": model.env.now,
         "nodes": nodes,
         "edges": edges,
     }
+    if part_type_names(model):
+        summary["part_types"] = part_type_report(model)
+    return summary

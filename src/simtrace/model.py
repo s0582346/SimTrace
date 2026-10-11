@@ -22,6 +22,7 @@ class FactoryModel:
         self.edges: dict[str, object] = {}
         self.events: list[dict] = [] # Item-flow events captured from the most recent run_simulation
         self.item_paths: dict[str, list[str]] = {} # Per-item trail through the plant from the most recent run. Built from `events` by telemetry.build_item_paths
+        self.item_attributes: dict[str, dict] = {} # Item id -> payload stamped on it in the most recent run (part type plus its Source's attributes)
         self.spec: list[dict] = [] # Ordered build log ({"op", "kwargs"} per create_*/connect, raw args); replications replay it to rebuild the graph (see rebuild.build_from_spec)
 
     def has_node(self, node_id: str) -> bool:
