@@ -12,7 +12,8 @@ Combiner expecting more in-edges than it has, a branch that leads nowhere. A
 **warning** means the run works and returns a plausible answer that is not the
 one the modeller meant: items dropped at a non-blocking node, a conveyor whose
 item length disagrees with the items travelling on it, an UNPACK splitter with
-no pallets upstream, parallel branches that lead on over different stations.
+no pallets upstream, parallel branches that lead on over different stations, an
+out-edge of a routing machine that no route uses.
 
 Nothing here advances the clock or mutates the model, so it can be called on a
 model that has never run and on one that has.
@@ -22,6 +23,8 @@ from __future__ import annotations
 
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
+from simtrace.tools.builders.part_types import make_payload
+from simtrace.tools.builders.routing import FALLBACK, pick_edge_id
 
 _SOURCE_TYPE = "Source"
 _SINK_TYPE = "Sink"
@@ -380,6 +383,8 @@ def _check_branch_symmetry(
 
     A Splitter is exempt. It sends a pallet's contents down one out-edge and
     the empty container down another, so its branches reach different nodes.
+    A routing machine is exempt too: it sends each item down the branch its
+    rule names, so its branches lead to different stations on purpose.
 
     A branch that skips a node other than the bottleneck leaves the throughput
     unchanged, so no rate calculation reports it.
@@ -388,6 +393,8 @@ def _check_branch_symmetry(
 
     for node_id, successors in downstream.items():
         if len(successors) < 2 or node_types.get(node_id) == _SPLITTER_TYPE:
+            continue
+        if getattr(model.nodes.get(node_id), "routes", None) is not None:
             continue
 
         beyond = {
@@ -556,6 +563,149 @@ def _check_pallets(
     return findings
 
 
+def _routed_arrivals(
+    model: FactoryModel, node_types: dict[str, str]
+) -> dict[str, list[tuple[str, dict]]]:
+    """For each routing machine, list the Sources whose parts can reach it.
+
+    Each entry is the Source id plus what its parts carry (type and
+    attributes). To find them, we follow each Source's parts through the
+    model, edge by edge. At a routing machine, the parts only go on along the
+    edge the machine would send them to. So a second routing machine sees only
+    the parts the first one sends its way. Parts that a Combiner packs into a
+    pallet are not followed any further.
+    """
+    arrivals: dict[str, list[tuple[str, dict]]] = {}
+
+    for source_id, node_type in node_types.items():
+        if node_type != _SOURCE_TYPE:
+            continue
+        # The payload every item of this Source carries; {} for untyped items.
+        source = model.nodes[source_id]
+        payload = (
+            make_payload(source)
+            if getattr(source, "part_type", None) is not None
+            else {}
+        )
+
+        # Walk forward from the Source, visiting each node once.
+        seen = {source_id}
+        queue = [source_id]
+        while queue:
+            node_id = queue.pop()
+            node = model.nodes[node_id]
+            out_edges = _edge_list(node, "out_edges")
+
+            # Routing machine: note that this Source's items arrive here, then
+            # keep only the edge the rule picks for them. No match keeps none.
+            routes = getattr(node, "routes", None)
+            if routes is not None:
+                arrivals.setdefault(node_id, []).append((source_id, payload))
+                edge_id = pick_edge_id(routes, payload.get(node.route_by))
+                out_edges = [e for e in out_edges if getattr(e, "id", None) == edge_id]
+
+            for edge in out_edges:
+                # Skip half-wired edges and nodes already visited.
+                _, dest_id = _endpoints(edge)
+                if dest_id is None or dest_id in seen:
+                    continue
+                # A Combiner packs items from its other in-edges into the
+                # pallet from its first one; packed items are not followed.
+                dest = model.nodes[dest_id]
+                if (
+                    node_types.get(dest_id) == _COMBINER_TYPE
+                    and _edge_list(dest, "in_edges")[:1] != [edge]
+                ):
+                    continue
+                seen.add(dest_id)
+                queue.append(dest_id)
+
+    return arrivals
+
+
+def _check_routes(model: FactoryModel, node_types: dict[str, str]) -> list[dict]:
+    """Check that each routing machine's rule fits its edges and its parts.
+
+    Three things are checked. Every edge in `routes` must leave this machine.
+    Every part that can arrive must have a route, or there must be a "*"
+    fallback. If either is wrong, the run stops at the first part it affects.
+    And every edge that leaves the machine should appear in `routes`,
+    otherwise no part ever uses it.
+    """
+    findings: list[dict] = []
+    arrivals = _routed_arrivals(model, node_types)
+
+    for node_id, node in model.nodes.items():
+        # Only machines with a routing rule are checked.
+        routes = getattr(node, "routes", None)
+        if routes is None:
+            continue
+        route_by = node.route_by
+        out_ids = [getattr(e, "id", None) for e in _edge_list(node, "out_edges")]
+
+        # 1. Every edge in the rule must leave this machine.
+        for value, edge_id in routes.items():
+            if edge_id in out_ids:
+                continue
+            findings.append(
+                _finding(
+                    "route_target",
+                    _ERROR,
+                    node_id,
+                    f"Machine '{node_id}' sends {route_by}={value!r} to "
+                    f"'{edge_id}', which is not one of its out-edges ("
+                    + (", ".join(f"'{e}'" for e in out_ids) or "none")
+                    + "). The run stops at the first item sent there.",
+                )
+            )
+
+        # 2. Every edge that leaves this machine should be in the rule.
+        for edge_id in out_ids:
+            if edge_id in routes.values():
+                continue
+            findings.append(
+                _finding(
+                    "route_unused_edge",
+                    _WARNING,
+                    node_id,
+                    f"Machine '{node_id}' has out-edge '{edge_id}', but no entry "
+                    "in its routes sends items there, so nothing travels "
+                    "through it.",
+                )
+            )
+
+        # 3. Every Source whose parts arrive here needs a route or "*".
+        for source_id, payload in arrivals.get(node_id, []):
+            value = payload.get(route_by)
+            if pick_edge_id(routes, value) is not None:
+                continue
+            # Say why the parts don't match, for the message.
+            if not payload:
+                described = "carry no part type"
+            elif route_by not in payload:
+                described = f"have no attribute '{route_by}'"
+            elif not isinstance(value, str):
+                described = (
+                    f"have {route_by}={value!r}, and only string values match "
+                    "a route"
+                )
+            else:
+                described = f"have {route_by}={value!r}"
+            findings.append(
+                _finding(
+                    "route_unmatched",
+                    _ERROR,
+                    node_id,
+                    f"Machine '{node_id}' routes by '{route_by}', but items "
+                    f"from Source '{source_id}' {described}. Its routes have no "
+                    f'entry for that and no "{FALLBACK}" fallback, so the run '
+                    "stops at the first such item.",
+                )
+            )
+
+    return findings
+
+
 def validate_model(*, model: FactoryModel | None = None) -> dict:
     """Check the assembled graph before it is run.
 
@@ -569,6 +719,8 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
         combiner_quantities target_quantity_of_each_item doesn't match in_edges
         reachability        a node is on no route from a Source to a Sink
         splitter_mode       a splitter is in SPLIT mode, which cannot run
+        route_target        a routing machine names an edge it is not wired to
+        route_unmatched     items reach a routing machine that no route matches
 
     Warnings:
         silent_discard        a non-blocking node drops items at a full out-edge
@@ -576,6 +728,7 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
         conveyor_item_length  a belt's item length disagrees with its Source's
         pallet_mismatch       packed items are handled with none produced above,
                               or a splitter is fed empty pallets from a Source
+        route_unused_edge     a routing machine's out-edge that no route names
 
     Returns a report dict:
         {
@@ -615,6 +768,7 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
     findings += _check_branch_symmetry(model, node_types, downstream)
     findings += _check_conveyor_item_length(model, node_types, upstream)
     findings += _check_pallets(model, node_types, upstream)
+    findings += _check_routes(model, node_types)
 
     errors = [f for f in findings if f["severity"] == _ERROR]
     warnings = [f for f in findings if f["severity"] == _WARNING]

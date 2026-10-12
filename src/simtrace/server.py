@@ -10,21 +10,21 @@ Discrete-event material-flow simulation tools (FactorySimPy): active nodes
 (source/machine/splitter/combiner/sink) wired by passive edges
 (buffer/conveyor/fleet), then run and verify.
 
-Modeling patterns. Routing, priority and processing times are encoded in the
-graph structure only:
+Modeling patterns:
 - Part types: create_source(part_type=<name>, attributes={...}) stamps the
-  type and its attributes on every item the Source releases. Attributes are
-  for reporting (run_simulation returns per-type counts and attribute sums);
-  they never change where an item goes.
+  type and its attributes on every item the Source releases. run_simulation
+  returns per-type counts and attribute sums. Attributes change where an item
+  goes only at a machine with route_by.
 - Every node-to-node hop needs an edge. A bare hand-off is a buffer with
   capacity=1, delay=0.
 - Product mix: one Source per type; inter_arrival_time = overall mean / mix
   fraction. E.g. one order every 8 min, 60%/40% mix -> "exp(13.33)" and
   "exp(20)". Never use the mix fraction itself as the exp argument.
-- Per-type routings: give each type its own branch of nodes; share stations
-  only from the point where all routings are identical to the end. Merging
-  (several in-edges) is fine; splitting by type after a shared station is
-  impossible.
+- Per-type routings: share a station between types and split them afterwards
+  with create_machine(route_by=<attribute>, routes={<value>: <out-edge id>,
+  "*": <out-edge id>}). The machine sends each item to the out-edge its
+  attribute value names; "*" catches every other value. Merging (several
+  in-edges) needs nothing special.
 - Priority: a machine with in_edge_selection="FIRST_AVAILABLE" drains its
   in-edges in connect order — connect the higher-priority type's buffer
   first. Non-preemptive: a running job is never interrupted.

@@ -51,6 +51,14 @@ def resolve_routes(
     return dict(routes)
 
 
+def pick_edge_id(routes: dict[str, str], value: object) -> str | None:
+    """The edge id `routes` gives for `value`, else the "*" edge, else None."""
+    edge_id = routes.get(value) if isinstance(value, str) else None
+    if edge_id is None:
+        edge_id = routes.get(FALLBACK)
+    return edge_id
+
+
 def route_selector(
     machine: object, route_by: str, routes: dict[str, str]
 ) -> Callable[[], int]:
@@ -64,9 +72,7 @@ def route_selector(
     def select() -> int:
         item = machine.env.active_process.item_to_put
         value = (item.payload or {}).get(route_by)
-        edge_id = routes.get(value) if isinstance(value, str) else None
-        if edge_id is None:
-            edge_id = routes.get(FALLBACK)
+        edge_id = pick_edge_id(routes, value)
         if edge_id is None:
             raise ValueError(
                 f"Machine '{machine.id}': item '{item.id}' has "
