@@ -627,3 +627,86 @@ def test_second_sorter_gets_a_family_it_has_no_route_for(model):
     unmatched = [f for f in report["errors"] if f["check"] == "route_unmatched"]
     assert [f["component"] for f in unmatched] == ["sort2"]
     assert "src_B" in unmatched[0]["message"]
+
+
+# --- route shares and loops ---------------------------------------------------
+
+
+def inspection_line(model, shares: dict) -> FactoryModel:
+    """src -> b_in -> inspect, and one sink per edge named in `shares`."""
+    create_source("src", inter_arrival_time=2, blocking=True, model=model)
+    create_buffer("b_in", capacity=5, model=model)
+    create_machine("inspect", route_shares=shares, model=model)
+    connect("b_in", "src", "inspect", model=model)
+    for edge_id in shares:
+        create_buffer(edge_id, capacity=5, model=model)
+        create_sink(f"snk_{edge_id}", scrap=edge_id == "b_scrap", model=model)
+        connect(edge_id, "inspect", f"snk_{edge_id}", model=model)
+    return model
+
+
+def test_share_machine_that_fits_is_quiet(model):
+    inspection_line(model, {"b_ship": 0.95, "b_scrap": 0.05})
+
+    report = validate_model(model=model)
+
+    assert report["valid"]
+    assert report["errors"] == [] and report["warnings"] == []
+
+
+def test_share_to_an_edge_the_machine_is_not_wired_to(model):
+    inspection_line(model, {"b_ship": 0.95, "b_scrap": 0.05})
+    model.nodes["inspect"].route_shares["b_in"] = 0.0
+
+    report = validate_model(model=model)
+
+    assert components(report["errors"], "route_target") == {"inspect"}
+
+
+def test_out_edge_with_zero_share_is_warned_about(model):
+    inspection_line(model, {"b_ship": 1.0, "b_scrap": 0.0})
+
+    report = validate_model(model=model)
+
+    unused = [f for f in report["warnings"] if f["check"] == "route_unused_edge"]
+    assert len(unused) == 1
+    assert "b_scrap" in unused[0]["message"]
+    assert "share of 0" in unused[0]["message"]
+
+
+def test_out_edge_missing_from_shares_is_warned_about(model):
+    inspection_line(model, {"b_ship": 0.9, "b_scrap": 0.1})
+    create_buffer("b_spare", capacity=5, model=model)
+    create_sink("snk_spare", model=model)
+    connect("b_spare", "inspect", "snk_spare", model=model)
+
+    report = validate_model(model=model)
+
+    unused = [f for f in report["warnings"] if f["check"] == "route_unused_edge"]
+    assert len(unused) == 1
+    assert "b_spare" in unused[0]["message"]
+
+
+def test_rework_loop_is_warned_about_once(model):
+    create_source("src", inter_arrival_time=2, blocking=True, model=model)
+    create_machine("mill", processing_delay=1, model=model)
+    create_machine("check", route_shares={"b_ship": 0.9, "b_rework": 0.1},
+                   model=model)
+    create_sink("ship", model=model)
+    for edge_id in ("b_in", "b_check", "b_ship", "b_rework"):
+        create_buffer(edge_id, capacity=5, model=model)
+    connect("b_in", "src", "mill", model=model)
+    connect("b_rework", "check", "mill", model=model)
+    connect("b_check", "mill", "check", model=model)
+    connect("b_ship", "check", "ship", model=model)
+
+    report = validate_model(model=model)
+
+    loops = [f for f in report["warnings"] if f["check"] == "loop_jam"]
+    assert len(loops) == 1
+    assert "'check', 'mill'" in loops[0]["message"]
+    assert report["valid"]
+
+
+def test_line_without_a_loop_gets_no_loop_warning(line):
+    assert "loop_jam" not in checks(validate_model(model=line)["warnings"])
