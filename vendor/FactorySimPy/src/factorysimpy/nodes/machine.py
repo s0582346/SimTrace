@@ -46,7 +46,7 @@ class Machine(Node):
                     - "RANDOM": Selects a random out edge in the out_edges list.
                     - "ROUND_ROBIN": Selects out edges in a round-robin manner.
                     - "FIRST_AVAILABLE": Selects the first out edge that can accept an item.
-                - callable: A function that returns an edge index.
+                - callable: A function that gets the item and returns an edge index.
             
 
         Behavior:
@@ -293,7 +293,7 @@ class Machine(Node):
         else:
             raise ValueError(f"Edge already exists in Machine '{self.id}' out_edges.")
         
-    def _get_out_edge_index(self):
+    def _get_out_edge_index(self, item):
         
          
         # if it is a constant integer, use the value as is
@@ -305,9 +305,8 @@ class Machine(Node):
             val = next(self.out_edge_selection)     
         # if it is a function return the value returned by the function     
         elif callable(self.out_edge_selection):
-            # It's a function (pass self and env if needed)
-            #return self.out_edge_selection(self, self.env)
-            val = self.out_edge_selection()       
+            # It's a function: it gets the item and returns an edge index
+            val = self.out_edge_selection(item)
         else:
             raise ValueError("out_edge_selection must be a generator or a callable.")   
         # Check if the value is within the valid range of out_edges
@@ -591,7 +590,7 @@ class Machine(Node):
             #out_edge_selection is not "FIRST_AVAILABLE" ---> get index value and push the item if not blocking
             else:
                 print(f"T={self.env.now:.2f}: {self.id} worker processed item: {item.id}")
-                out_edge_index_to_put = self._get_out_edge_index()
+                out_edge_index_to_put = self._get_out_edge_index(item)
                 #print("OUT",out_edge_index_to_put)
                 assert 0<=out_edge_index_to_put < len(self.out_edges), f"{self.id} - Invalid edge index. {out_edge_index_to_put} is not in range. Range must be between {0} and  {len(self.out_edges)-1} for in_edges."
                 outedge_to_put = self.out_edges[out_edge_index_to_put]
