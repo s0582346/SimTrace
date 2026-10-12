@@ -95,25 +95,37 @@ def part_type_names(model: FactoryModel) -> list[str]:
 
 
 def part_type_report(model: FactoryModel) -> dict:
-    """Count generated and completed items per part type in the latest run.
+    """Count generated, completed and scrapped items per part type.
 
-    Generated items are those stamped by their Source. An item is completed
-    when its trail in `model.item_paths` ends at a Sink. For every numeric
-    attribute the report sums the values over the completed items. Sources
-    that share a part type name are counted together.
+    Generated items are those stamped by their Source in the latest run. An
+    item is completed when its trail in `model.item_paths` ends at a Sink, and
+    scrapped when that Sink was created with scrap=True. For every numeric
+    attribute the report sums the values over the completed items only.
+    Sources that share a part type name are counted together.
     """
     from factorysimpy.nodes.sink import Sink
 
     report = {
-        name: {"generated": 0, "completed": 0, "completed_attribute_sums": {}}
+        name: {
+            "generated": 0,
+            "completed": 0,
+            "scrapped": 0,
+            "completed_attribute_sums": {},
+        }
         for name in part_type_names(model)
     }
     for item_id, payload in model.item_attributes.items():
         entry = report[payload[_RESERVED]]
         entry["generated"] += 1
 
+        # Items still in the line have not reached a Sink yet.
         trail = model.item_paths.get(item_id)
-        if not trail or not isinstance(model.nodes.get(trail[-1]), Sink):
+        end = model.nodes.get(trail[-1]) if trail else None
+        if not isinstance(end, Sink):
+            continue
+        # A scrap Sink counts the item but adds nothing to the sums.
+        if getattr(end, "scrap", False):
+            entry["scrapped"] += 1
             continue
         entry["completed"] += 1
         sums = entry["completed_attribute_sums"]

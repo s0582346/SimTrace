@@ -25,6 +25,11 @@ Modeling patterns:
   "*": <out-edge id>}). The machine sends each item to the out-edge its
   attribute value names; "*" catches every other value. Merging (several
   in-edges) needs nothing special.
+- Scrap and rework: create_machine(route_shares={<out-edge id>: <share>, ...})
+  sends each item to an edge at random, e.g. {"b_ship": 0.95, "b_scrap":
+  0.05}; the shares add up to 1. Put a create_sink(scrap=True) behind the
+  scrap edge so the per-type report counts those items as scrapped. For
+  rework, let an edge lead back to an earlier station.
 - Priority: a machine with in_edge_selection="FIRST_AVAILABLE" drains its
   in-edges in connect order — connect the higher-priority type's buffer
   first. Non-preemptive: a running job is never interrupted.

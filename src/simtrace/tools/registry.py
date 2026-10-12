@@ -85,6 +85,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     def create_sink(
         id: str,
         node_setup_time: float = 0,
+        scrap: bool = False,
     ) -> dict:
         """Create a Sink node that collects flow items at the end of the line.
 
@@ -94,10 +95,14 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         Args:
             id: unique node identifier.
             node_setup_time: constant initial setup delay.
+            scrap: set True for a scrap bin. Items arriving here count as
+                scrapped, not completed, in the per-type report of
+                run_simulation, and add nothing to its attribute sums.
         """
         return builders.create_sink(
             id=id,
             node_setup_time=node_setup_time,
+            scrap=scrap,
         )
 
     @mcp.tool()
@@ -112,6 +117,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         node_setup_time: float = 0,
         route_by: str | None = None,
         routes: dict[str, str] | None = None,
+        route_shares: dict[str, float] | None = None,
     ) -> dict:
         """Create a Machine node that processes flow items.
 
@@ -136,7 +142,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             route_by: needs routes. Name of the item attribute that decides
                 where each item goes, e.g. "family" or "part_type". Items get
                 their attributes from create_source(part_type=...,
-                attributes=...). Replaces out_edge_selection.
+                attributes=...). Leave out_edge_selection at its default;
+                route_by and routes take over that job.
             routes: needs route_by. Attribute value -> id of one of this
                 machine's out-edges, e.g. {"A": "b_paint", "B": "b_drill"}.
                 The key "*" sends every other value to one edge. Only string
@@ -145,6 +152,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 machine waits (blocking=True) or discards the item
                 (blocking=False); no other edge is tried. Use
                 processing_delay=0 for a machine that only sorts.
+            route_shares: out-edge id -> share of items sent there, adding up
+                to 1, e.g. {"b_ship": 0.95, "b_scrap": 0.05}. Chance picks
+                the edge for each item. An edge may lead anywhere, also back
+                to an earlier station for rework. Not with route_by or
+                out_edge_selection.
         """
         return builders.create_machine(
             id=id,
@@ -156,6 +168,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             node_setup_time=node_setup_time,
             route_by=route_by,
             routes=routes,
+            route_shares=route_shares,
         )
 
     @mcp.tool()

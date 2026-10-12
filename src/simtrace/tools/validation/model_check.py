@@ -6,14 +6,19 @@ the two dynamic checks in this package: `verify_conservation` and
 `verify_item_flow` need a finished run to look at, this one needs nothing but
 the model. See `architecture/model_validation.md`.
 
-Findings come in two severities. An **error** means the run would crash or the
-numbers it produced would be meaningless: a Source with nothing wired to it, a
-Combiner expecting more in-edges than it has, a branch that leads nowhere. A
-**warning** means the run works and returns a plausible answer that is not the
-one the modeller meant: items dropped at a non-blocking node, a conveyor whose
-item length disagrees with the items travelling on it, an UNPACK splitter with
-no pallets upstream, parallel branches that lead on over different stations, an
-out-edge of a routing machine that no route uses.
+There are two kinds of findings.
+
+An **error** means the run would crash or its numbers would mean nothing.
+Examples: a Source with no edge, a branch that leads nowhere.
+
+A **warning** means the run works, but the model may not be what was meant.
+Examples:
+  - a node that throws items away when its out-edge is full (WIP)
+  - a conveyor set up for a different item length than the items on it
+  - a splitter with no pallets coming from upstream
+  - parallel branches that pass different stations
+  - an out-edge of a routing machine that no route uses
+  - a loop, such as rework, that can get stuck when all its buffers are full
 
 Nothing here advances the clock or mutates the model, so it can be called on a
 model that has never run and on one that has.
@@ -384,7 +389,8 @@ def _check_branch_symmetry(
     A Splitter is exempt. It sends a pallet's contents down one out-edge and
     the empty container down another, so its branches reach different nodes.
     A routing machine is exempt too: it sends each item down the branch its
-    rule names, so its branches lead to different stations on purpose.
+    rule names (by attribute or by share), so its branches lead to different
+    stations on purpose.
 
     A branch that skips a node other than the bottleneck leaves the throughput
     unchanged, so no rate calculation reports it.
@@ -394,7 +400,10 @@ def _check_branch_symmetry(
     for node_id, successors in downstream.items():
         if len(successors) < 2 or node_types.get(node_id) == _SPLITTER_TYPE:
             continue
-        if getattr(model.nodes.get(node_id), "routes", None) is not None:
+        node = model.nodes.get(node_id)
+        if getattr(node, "routes", None) is not None:
+            continue
+        if getattr(node, "route_shares", None) is not None:
             continue
 
         beyond = {
@@ -604,6 +613,13 @@ def _routed_arrivals(
                 edge_id = pick_edge_id(routes, payload.get(node.route_by))
                 out_edges = [e for e in out_edges if getattr(e, "id", None) == edge_id]
 
+            # Share machine: parts go on along every edge with a share above 0.
+            shares = getattr(node, "route_shares", None)
+            if shares is not None:
+                out_edges = [
+                    e for e in out_edges if shares.get(getattr(e, "id", None), 0) > 0
+                ]
+
             for edge in out_edges:
                 # Skip half-wired edges and nodes already visited.
                 _, dest_id = _endpoints(edge)
@@ -706,6 +722,101 @@ def _check_routes(model: FactoryModel, node_types: dict[str, str]) -> list[dict]
     return findings
 
 
+def _check_shares(model: FactoryModel) -> list[dict]:
+    """Check that each share machine's rule fits its edges.
+
+    Every edge in `route_shares` must leave this machine, otherwise the run
+    stops at the first part sent there. And every edge that leaves the
+    machine should have a share above 0, otherwise no part ever uses it.
+    """
+    findings: list[dict] = []
+
+    for node_id, node in model.nodes.items():
+        # Only machines with a share rule are checked.
+        shares = getattr(node, "route_shares", None)
+        if shares is None:
+            continue
+        out_ids = [getattr(e, "id", None) for e in _edge_list(node, "out_edges")]
+
+        # 1. Every edge in the rule must leave this machine.
+        for edge_id, share in shares.items():
+            if edge_id in out_ids:
+                continue
+            findings.append(
+                _finding(
+                    "route_target",
+                    _ERROR,
+                    node_id,
+                    f"Machine '{node_id}' sends a share of {share} to "
+                    f"'{edge_id}', which is not one of its out-edges ("
+                    + (", ".join(f"'{e}'" for e in out_ids) or "none")
+                    + "). The run stops at the first item sent there.",
+                )
+            )
+
+        # 2. Every edge that leaves this machine should get a share above 0.
+        for edge_id in out_ids:
+            if shares.get(edge_id, 0) > 0:
+                continue
+            why = "has a share of 0" if edge_id in shares else "is not in route_shares"
+            findings.append(
+                _finding(
+                    "route_unused_edge",
+                    _WARNING,
+                    node_id,
+                    f"Machine '{node_id}' has out-edge '{edge_id}', but it "
+                    f"{why}, so nothing travels through it.",
+                )
+            )
+
+    return findings
+
+
+def _check_loops(model: FactoryModel, downstream: dict[str, set]) -> list[dict]:
+    """Warn about loops in the graph, such as a rework loop.
+
+    In a loop each station waits for space in the buffer of the next one. When
+    every buffer in the loop is full at the same time, no station can hand on
+    its part and the loop stops for good. Larger buffers in the loop make this
+    less likely; they cannot rule it out.
+    """
+    findings: list[dict] = []
+
+    # A node is in a loop when it can reach itself again.
+    in_loop = {
+        node_id
+        for node_id in model.nodes
+        if node_id in _walk(list(downstream.get(node_id, ())), downstream)
+    }
+
+    # Nodes that can reach each other belong to the same loop; report each
+    # loop once.
+    reported: set = set()
+    for node_id in sorted(in_loop):
+        if node_id in reported:
+            continue
+        reach = _walk([node_id], downstream)
+        members = sorted(
+            other for other in in_loop
+            if other in reach and node_id in _walk([other], downstream)
+        )
+        reported.update(members)
+        findings.append(
+            _finding(
+                "loop_jam",
+                _WARNING,
+                members[0],
+                "Stations "
+                + ", ".join(f"'{m}'" for m in members)
+                + " form a loop. When every buffer in the loop is full, each "
+                "station waits for the next one and the loop stops for good. "
+                "Give the buffers in the loop enough capacity.",
+            )
+        )
+
+    return findings
+
+
 def validate_model(*, model: FactoryModel | None = None) -> dict:
     """Check the assembled graph before it is run.
 
@@ -719,7 +830,8 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
         combiner_quantities target_quantity_of_each_item doesn't match in_edges
         reachability        a node is on no route from a Source to a Sink
         splitter_mode       a splitter is in SPLIT mode, which cannot run
-        route_target        a routing machine names an edge it is not wired to
+        route_target        a routing machine names an edge it is not wired to,
+                            in its routes or its route_shares
         route_unmatched     items reach a routing machine that no route matches
 
     Warnings:
@@ -728,7 +840,9 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
         conveyor_item_length  a belt's item length disagrees with its Source's
         pallet_mismatch       packed items are handled with none produced above,
                               or a splitter is fed empty pallets from a Source
-        route_unused_edge     a routing machine's out-edge that no route names
+        route_unused_edge     a routing machine's out-edge that no route names,
+                              or that has a share of 0
+        loop_jam              stations form a loop that stops when it is full
 
     Returns a report dict:
         {
@@ -769,6 +883,8 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
     findings += _check_conveyor_item_length(model, node_types, upstream)
     findings += _check_pallets(model, node_types, upstream)
     findings += _check_routes(model, node_types)
+    findings += _check_shares(model)
+    findings += _check_loops(model, downstream)
 
     errors = [f for f in findings if f["severity"] == _ERROR]
     warnings = [f for f in findings if f["severity"] == _WARNING]

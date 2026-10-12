@@ -72,8 +72,9 @@ def run_simulation(
 
     Returns a summary dict with the end time, the seed, and per-node/edge stats.
     When a Source has a part type, it also holds `part_types`: per type
-    the generated and completed item counts and, over the completed items, the
-    sum of every numeric attribute.
+    the generated, completed and scrapped item counts and, over the completed
+    items, the sum of every numeric attribute. Items that end at a Sink with
+    scrap=True count as scrapped.
     """
     model = model if model is not None else get_session_model()
 

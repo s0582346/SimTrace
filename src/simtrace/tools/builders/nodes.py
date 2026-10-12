@@ -25,7 +25,12 @@ from factorysimpy.nodes.splitter import Splitter
 
 from simtrace.model import FactoryModel, get_model
 from simtrace.tools.builders.part_types import resolve_part_type
-from simtrace.tools.builders.routing import resolve_routes, route_selector
+from simtrace.tools.builders.routing import (
+    resolve_routes,
+    resolve_shares,
+    route_selector,
+    share_selector,
+)
 from simtrace.tools.utils import require_number, resolve_delay
 
 
@@ -141,6 +146,7 @@ def create_source(
 def create_sink(
     id: str,
     node_setup_time: float = 0,
+    scrap: bool = False,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -151,6 +157,8 @@ def create_sink(
     Args:
         id: unique node identifier.
         node_setup_time: constant initial setup delay.
+        scrap: if True, items arriving here count as scrapped, not completed,
+            in the per-type report of run_simulation.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -162,16 +170,23 @@ def create_sink(
         raise ValueError(f"A node with id '{id}' already exists.")
 
     require_number("node_setup_time", node_setup_time)
+    if not isinstance(scrap, bool):
+        raise ValueError("scrap must be a bool.")
 
     node = Sink(env=model.env, id=id, node_setup_time=node_setup_time)
+    # Read by the per-type report.
+    node.scrap = scrap
 
     model.add_node(id, node)
-    model.record("create_sink", {"id": id, "node_setup_time": node_setup_time})
+    model.record(
+        "create_sink", {"id": id, "node_setup_time": node_setup_time, "scrap": scrap}
+    )
 
     return {
         "id": id,
         "type": "Sink",
         "node_setup_time": node_setup_time,
+        "scrap": scrap,
         "in_edges": 0,
         "out_edges": 0,
     }
@@ -187,6 +202,7 @@ def create_machine(
     node_setup_time: float = 0,
     route_by: str | None = None,
     routes: dict[str, str] | None = None,
+    route_shares: dict[str, float] | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -195,6 +211,8 @@ def create_machine(
     A Machine processes items. It needs at least one in_edge and one out_edge
     (both wired later via connect). With `route_by` set, the machine sends each
     item to the out-edge that `routes` gives for the item's attribute value.
+    With `route_shares` set, chance picks each item's out-edge, weighted by
+    the shares.
     Args:
         id: unique node identifier.
         work_capacity: number of items that can be processed simultaneously
@@ -213,7 +231,12 @@ def create_machine(
             out-edge, e.g. "family" or "part_type".
         routes: needs route_by. Attribute value -> id of one of this machine's
             out-edges. The key "*" catches every other value. Only string
-            values match. Replaces out_edge_selection.
+            values match. Leave out_edge_selection at its default; routes
+            takes over that job.
+        route_shares: out-edge id -> share of items sent there; the shares
+            add up to 1. Cannot be combined with route_by. Leave
+            out_edge_selection at its default; route_shares takes over that
+            job.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -239,6 +262,7 @@ def create_machine(
     if not isinstance(out_edge_selection, str):
         raise ValueError("out_edge_selection must be a string (v1).")
     resolved_routes = resolve_routes(route_by, routes, out_edge_selection)
+    resolved_shares = resolve_shares(route_shares, route_by, out_edge_selection)
 
     node = Machine(
         env=model.env,
@@ -253,8 +277,11 @@ def create_machine(
     # The rule as given; the selector below is what the Machine calls.
     node.route_by = route_by
     node.routes = resolved_routes
+    node.route_shares = resolved_shares
     if resolved_routes is not None:
         node.out_edge_selection = route_selector(node, route_by, resolved_routes)
+    if resolved_shares is not None:
+        node.out_edge_selection = share_selector(node, resolved_shares)
 
     model.add_node(id, node)
     model.record(
@@ -269,6 +296,7 @@ def create_machine(
             "node_setup_time": node_setup_time,
             "route_by": route_by,
             "routes": routes,
+            "route_shares": route_shares,
         },
     )
 
@@ -283,6 +311,7 @@ def create_machine(
         "node_setup_time": node_setup_time,
         "route_by": route_by,
         "routes": routes,
+        "route_shares": route_shares,
         "in_edges": 0,
         "out_edges": 0,
     }
