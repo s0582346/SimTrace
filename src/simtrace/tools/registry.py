@@ -110,6 +110,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         in_edge_selection: str = "FIRST_AVAILABLE",
         out_edge_selection: str = "FIRST_AVAILABLE",
         node_setup_time: float = 0,
+        route_by: str | None = None,
+        routes: dict[str, str] | None = None,
     ) -> dict:
         """Create a Machine node that processes flow items.
 
@@ -131,6 +133,18 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             out_edge_selection: out-edge selection strategy, one of
                 "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
             node_setup_time: constant initial setup delay.
+            route_by: needs routes. Name of the item attribute that decides
+                where each item goes, e.g. "family" or "part_type". Items get
+                their attributes from create_source(part_type=...,
+                attributes=...). Replaces out_edge_selection.
+            routes: needs route_by. Attribute value -> id of one of this
+                machine's out-edges, e.g. {"A": "b_paint", "B": "b_drill"}.
+                The key "*" sends every other value to one edge. Only string
+                values match. An item with no matching route and no "*" stops
+                the run with an error. When the target edge is full, the
+                machine waits (blocking=True) or discards the item
+                (blocking=False); no other edge is tried. Use
+                processing_delay=0 for a machine that only sorts.
         """
         return builders.create_machine(
             id=id,
@@ -140,6 +154,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             in_edge_selection=in_edge_selection,
             out_edge_selection=out_edge_selection,
             node_setup_time=node_setup_time,
+            route_by=route_by,
+            routes=routes,
         )
 
     @mcp.tool()

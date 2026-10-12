@@ -25,6 +25,7 @@ from factorysimpy.nodes.splitter import Splitter
 
 from simtrace.model import FactoryModel, get_model
 from simtrace.tools.builders.part_types import resolve_part_type
+from simtrace.tools.builders.routing import resolve_routes, route_selector
 from simtrace.tools.utils import require_number, resolve_delay
 
 
@@ -184,13 +185,16 @@ def create_machine(
     in_edge_selection: str = "FIRST_AVAILABLE",
     out_edge_selection: str = "FIRST_AVAILABLE",
     node_setup_time: float = 0,
+    route_by: str | None = None,
+    routes: dict[str, str] | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
     """Create a Machine node and register it in the shared model.
 
     A Machine processes items. It needs at least one in_edge and one out_edge
-    (both wired later via connect).
+    (both wired later via connect). With `route_by` set, the machine sends each
+    item to the out-edge that `routes` gives for the item's attribute value.
     Args:
         id: unique node identifier.
         work_capacity: number of items that can be processed simultaneously
@@ -205,6 +209,11 @@ def create_machine(
         out_edge_selection: out-edge selection strategy, one of
             "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
         node_setup_time: constant initial setup delay.
+        route_by: needs routes. Name of the item attribute that decides the
+            out-edge, e.g. "family" or "part_type".
+        routes: needs route_by. Attribute value -> id of one of this machine's
+            out-edges. The key "*" catches every other value. Only string
+            values match. Replaces out_edge_selection.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -229,6 +238,7 @@ def create_machine(
         raise ValueError("in_edge_selection must be a string (v1).")
     if not isinstance(out_edge_selection, str):
         raise ValueError("out_edge_selection must be a string (v1).")
+    resolved_routes = resolve_routes(route_by, routes, out_edge_selection)
 
     node = Machine(
         env=model.env,
@@ -240,6 +250,11 @@ def create_machine(
         in_edge_selection=in_edge_selection,
         out_edge_selection=out_edge_selection,
     )
+    # The rule as given; the selector below is what the Machine calls.
+    node.route_by = route_by
+    node.routes = resolved_routes
+    if resolved_routes is not None:
+        node.out_edge_selection = route_selector(node, route_by, resolved_routes)
 
     model.add_node(id, node)
     model.record(
@@ -252,6 +267,8 @@ def create_machine(
             "in_edge_selection": in_edge_selection,
             "out_edge_selection": out_edge_selection,
             "node_setup_time": node_setup_time,
+            "route_by": route_by,
+            "routes": routes,
         },
     )
 
@@ -264,6 +281,8 @@ def create_machine(
         "in_edge_selection": in_edge_selection,
         "out_edge_selection": out_edge_selection,
         "node_setup_time": node_setup_time,
+        "route_by": route_by,
+        "routes": routes,
         "in_edges": 0,
         "out_edges": 0,
     }
