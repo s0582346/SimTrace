@@ -455,3 +455,175 @@ def test_every_finding_names_its_check_and_what_to_do(model):
         assert set(finding) == {"check", "severity", "component", "message"}
         assert finding["severity"] in ("error", "warning")
         assert finding["message"]
+
+
+# --- routing ----------------------------------------------------------------
+
+
+def sorting_line(model, routes: dict, families=("A", "B")) -> FactoryModel:
+    """One typed Source per family into a sorting machine; one sink per edge.
+
+    Every edge id named in `routes` is wired from the sorter to its own sink.
+    """
+    for family in families:
+        src_id = f"src_{family}"
+        create_source(src_id, inter_arrival_time=2, blocking=True,
+                      part_type=src_id, attributes={"family": family},
+                      model=model)
+        create_buffer(f"b_{src_id}", capacity=5, model=model)
+    create_machine("sort", route_by="family", routes=routes, model=model)
+    for family in families:
+        connect(f"b_src_{family}", f"src_{family}", "sort", model=model)
+    for edge_id in dict.fromkeys(routes.values()):
+        create_buffer(edge_id, capacity=5, model=model)
+        create_sink(f"snk_{edge_id}", model=model)
+        connect(edge_id, "sort", f"snk_{edge_id}", model=model)
+    return model
+
+
+def test_routing_machine_that_fits_is_quiet(model):
+    sorting_line(model, {"A": "b_a", "B": "b_b"})
+
+    report = validate_model(model=model)
+
+    assert report["valid"]
+    assert report["errors"] == [] and report["warnings"] == []
+
+
+def family_sources(model, into: str, families=("A", "B")) -> None:
+    """One typed Source per family, each wired through a buffer into `into`."""
+    for family in families:
+        src_id = f"src_{family}"
+        create_source(src_id, inter_arrival_time=2, blocking=True,
+                      part_type=src_id, attributes={"family": family},
+                      model=model)
+        create_buffer(f"b_{src_id}", capacity=5, model=model)
+        connect(f"b_{src_id}", src_id, into, model=model)
+
+
+def wire(model, edge_id: str, src_id: str, dest_id: str) -> None:
+    create_buffer(edge_id, capacity=5, model=model)
+    connect(edge_id, src_id, dest_id, model=model)
+
+
+def test_routing_machine_is_exempt_from_branch_symmetry(model):
+    # sort -> b_a -> paint -> snk_a and sort -> b_b -> snk_b: only A is painted.
+    create_machine("sort", route_by="family",
+                   routes={"A": "b_a", "B": "b_b"}, model=model)
+    create_machine("paint", processing_delay=1, model=model)
+    create_sink("snk_a", model=model)
+    create_sink("snk_b", model=model)
+    family_sources(model, into="sort")
+    wire(model, "b_a", "sort", "paint")
+    wire(model, "b_p", "paint", "snk_a")
+    wire(model, "b_b", "sort", "snk_b")
+
+    report = validate_model(model=model)
+
+    assert report["valid"]
+    assert report["warnings"] == []
+
+
+def test_same_layout_without_routing_still_warns(model):
+    create_machine("split", model=model)
+    create_machine("paint", processing_delay=1, model=model)
+    create_sink("snk_a", model=model)
+    create_sink("snk_b", model=model)
+    family_sources(model, into="split")
+    wire(model, "b_a", "split", "paint")
+    wire(model, "b_p", "paint", "snk_a")
+    wire(model, "b_b", "split", "snk_b")
+
+    report = validate_model(model=model)
+
+    assert components(report["warnings"], "branch_symmetry") == {"split"}
+
+
+def test_route_to_an_edge_the_machine_is_not_wired_to(model):
+    sorting_line(model, {"A": "b_a", "B": "b_b"})
+    model.nodes["sort"].routes["B"] = "b_src_A"
+
+    report = validate_model(model=model)
+
+    assert components(report["errors"], "route_target") == {"sort"}
+    assert not report["valid"]
+
+
+def test_unmatched_family_without_fallback(model):
+    sorting_line(model, {"A": "b_a"})
+
+    report = validate_model(model=model)
+
+    unmatched = [f for f in report["errors"] if f["check"] == "route_unmatched"]
+    assert len(unmatched) == 1
+    assert "src_B" in unmatched[0]["message"]
+    assert "family='B'" in unmatched[0]["message"]
+
+
+def test_fallback_covers_every_other_family(model):
+    sorting_line(model, {"A": "b_a", "*": "b_rest"}, families=("A", "B", "C"))
+
+    report = validate_model(model=model)
+
+    assert "route_unmatched" not in checks(report["errors"])
+
+
+def test_untyped_source_reaching_a_routing_machine(model):
+    sorting_line(model, {"A": "b_a", "B": "b_b"})
+    create_source("src_plain", inter_arrival_time=2, blocking=True, model=model)
+    create_buffer("b_plain", capacity=5, model=model)
+    connect("b_plain", "src_plain", "sort", model=model)
+
+    report = validate_model(model=model)
+
+    unmatched = [f for f in report["errors"] if f["check"] == "route_unmatched"]
+    assert len(unmatched) == 1
+    assert "src_plain" in unmatched[0]["message"]
+    assert "no part type" in unmatched[0]["message"]
+
+
+def test_out_edge_no_route_names_is_warned_about(model):
+    sorting_line(model, {"A": "b_a", "B": "b_b"})
+    create_buffer("b_spare", capacity=5, model=model)
+    create_sink("snk_spare", model=model)
+    connect("b_spare", "sort", "snk_spare", model=model)
+
+    report = validate_model(model=model)
+
+    unused = [f for f in report["warnings"] if f["check"] == "route_unused_edge"]
+    assert len(unused) == 1
+    assert "b_spare" in unused[0]["message"]
+
+
+def two_sorters(model, first_routes: dict) -> FactoryModel:
+    """sort -> b_a -> sort2 -> b_a2 -> snk_a, and sort -> b_b -> snk_b.
+
+    sort2 only has a route for family A.
+    """
+    create_machine("sort", route_by="family", routes=first_routes, model=model)
+    create_machine("sort2", route_by="family", routes={"A": "b_a2"}, model=model)
+    create_sink("snk_a", model=model)
+    create_sink("snk_b", model=model)
+    family_sources(model, into="sort")
+    wire(model, "b_a", "sort", "sort2")
+    wire(model, "b_a2", "sort2", "snk_a")
+    wire(model, "b_b", "sort", "snk_b")
+    return model
+
+
+def test_second_sorter_sees_only_what_the_first_sends_it(model):
+    two_sorters(model, {"A": "b_a", "B": "b_b"})
+
+    report = validate_model(model=model)
+
+    assert report["valid"]
+
+
+def test_second_sorter_gets_a_family_it_has_no_route_for(model):
+    two_sorters(model, {"A": "b_a", "B": "b_a"})
+
+    report = validate_model(model=model)
+
+    unmatched = [f for f in report["errors"] if f["check"] == "route_unmatched"]
+    assert [f["component"] for f in unmatched] == ["sort2"]
+    assert "src_B" in unmatched[0]["message"]
