@@ -103,6 +103,10 @@ def _flatten_run(result: Dict[str, Any]) -> Dict[str, float]:
     keyed like `snk.num_item_received`. Non-numeric stats (and None, for
     components that never populated a stats dict) are skipped. `bool` is an
     `int` subclass, so it is excluded explicitly.
+
+    The `part_types` section, when present, is flattened the same way, e.g.
+    `part_types.premium.completed` and
+    `part_types.premium.completed_attribute_sums.price`.
     """
     metrics: Dict[str, float] = {}
     for section in ("nodes", "edges"):
@@ -113,6 +117,14 @@ def _flatten_run(result: Dict[str, Any]) -> Dict[str, float]:
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     continue
                 metrics[f"{owner_id}.{stat_name}"] = float(value)
+
+    # Per part type: the counts, then one sum per numeric attribute.
+    for name, entry in result.get("part_types", {}).items():
+        prefix = f"part_types.{name}"
+        for count in ("generated", "completed", "scrapped"):
+            metrics[f"{prefix}.{count}"] = float(entry[count])
+        for key, total in entry["completed_attribute_sums"].items():
+            metrics[f"{prefix}.completed_attribute_sums.{key}"] = float(total)
     return metrics
 
 
@@ -198,7 +210,10 @@ def run_replications(
     Returns:
         A dict with:
           - `analysis`: the `ReplicationAnalyzer` output (per-metric stats,
-            CIs, `_replication_summary`, `_individual_replications`),
+            CIs, `_replication_summary`, `_individual_replications`). When a
+            Source has a part type, it includes per type
+            `part_types.<type>.generated`, `.completed`, `.scrapped` and
+            `.completed_attribute_sums.<attribute>`,
           - `summary`: the `format_industry_summary` text report,
           - `precision`: the `precision_report` output — per metric, how few of
             these runs would have reached `desired_precision`,

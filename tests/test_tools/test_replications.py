@@ -389,3 +389,74 @@ def test_analyzer_computes_t_ci_half_width():
     ci95 = metric["confidence_intervals"]["ci_95"]
     assert ci95["half_width"] > 0
     assert ci95["lower"] < 12.0 < ci95["upper"]
+
+
+# --- part types ---------------------------------------------------------------
+
+
+def _build_typed_line() -> FactoryModel:
+    """Two typed sources into one inspection that scraps 20% of the parts."""
+    from simtrace.tools.builders import create_machine
+
+    m = FactoryModel()
+    create_source("src_a", inter_arrival_time="exp(2)", blocking=True,
+                  part_type="a", attributes={"price": 10, "family": "X"},
+                  model=m)
+    create_source("src_b", inter_arrival_time="exp(3)", blocking=True,
+                  part_type="b", attributes={"price": 30}, model=m)
+    create_machine("inspect", route_shares={"b_ship": 0.8, "b_scrap": 0.2},
+                   model=m)
+    create_sink("ship", model=m)
+    create_sink("scrap", scrap=True, model=m)
+    for edge_id in ("b_a", "b_b", "b_ship", "b_scrap"):
+        create_buffer(edge_id, capacity=10, model=m)
+    connect("b_a", "src_a", "inspect", model=m)
+    connect("b_b", "src_b", "inspect", model=m)
+    connect("b_ship", "inspect", "ship", model=m)
+    connect("b_scrap", "inspect", "scrap", model=m)
+    return m
+
+
+def test_part_type_metrics_are_analyzed():
+    out = run_replications(until=100, replications=4, model=_build_typed_line())
+    analysis = out["analysis"]
+
+    for name in ("a", "b"):
+        for count in ("generated", "completed", "scrapped"):
+            assert analysis[f"part_types.{name}.{count}"]["sample_size"] == 4
+    assert analysis["part_types.a.completed_attribute_sums.price"]["sample_size"] == 4
+    # Only numeric attributes are summed.
+    assert "part_types.a.completed_attribute_sums.family" not in analysis
+
+
+def test_part_type_metrics_match_each_run():
+    out = run_replications(until=100, replications=4, model=_build_typed_line())
+
+    for run in out["analysis"]["_individual_replications"]:
+        completed = run["part_types.a.completed"] + run["part_types.b.completed"]
+        scrapped = run["part_types.a.scrapped"] + run["part_types.b.scrapped"]
+        assert completed == run["ship.num_item_received"]
+        assert scrapped == run["scrap.num_item_received"]
+        assert run["part_types.b.completed_attribute_sums.price"] == (
+            30 * run["part_types.b.completed"]
+        )
+
+
+def test_untyped_model_has_no_part_type_metrics():
+    out = run_replications(until=40, replications=3, model=_build_stochastic_line())
+
+    assert not any(key.startswith("part_types.") for key in out["analysis"])
+
+
+def test_sum_is_listed_even_when_no_item_completed():
+    m = FactoryModel()
+    create_source("src", inter_arrival_time=100, blocking=True,
+                  part_type="slow", attributes={"price": 5}, model=m)
+    create_buffer("b", capacity=1, model=m)
+    create_sink("snk", model=m)
+    connect("b", "src", "snk", model=m)
+
+    result = run_simulation(10, seed=1, model=m)
+
+    assert result["part_types"]["slow"]["completed"] == 0
+    assert result["part_types"]["slow"]["completed_attribute_sums"] == {"price": 0}

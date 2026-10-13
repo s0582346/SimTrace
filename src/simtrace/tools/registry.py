@@ -443,8 +443,10 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 exactly from this one number.
 
         Returns a dict with `summary` (a formatted text report — read this
-        first), `analysis` (per-metric mean/CI, keyed `node_id.stat_name`),
-        `precision` (per metric, the fewest of these runs that would have put
+        first), `analysis` (per-metric mean/CI, keyed `node_id.stat_name`;
+        with part types also `part_types.<type>.completed`, `.scrapped`,
+        `.generated` and `.completed_attribute_sums.<attribute>`, e.g. the
+        price sum per type), `precision` (per metric, the fewest of these runs that would have put
         the 95% interval within +/-10% of the mean, or `reached: false` when
         this batch never got there), `requested_replications`, `successful_replications`,
         `failures` (any runs that raised, with their seeds), and `execution`

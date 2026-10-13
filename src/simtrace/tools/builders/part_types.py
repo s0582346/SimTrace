@@ -114,6 +114,17 @@ def part_type_report(model: FactoryModel) -> dict:
         }
         for name in part_type_names(model)
     }
+    # Start every numeric attribute at 0, so a type with no completed items
+    # still lists its sums.
+    for node in model.nodes.values():
+        name = getattr(node, "part_type", None)
+        if name is None:
+            continue
+        sums = report[name]["completed_attribute_sums"]
+        for key, value in getattr(node, "part_attributes", {}).items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            sums.setdefault(key, 0)
     for item_id, payload in model.item_attributes.items():
         entry = report[payload[_RESERVED]]
         entry["generated"] += 1
