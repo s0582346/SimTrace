@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import sys
+
 from mcp.server.fastmcp import FastMCP
 
 from simtrace.tools.registry import register_tools
@@ -71,8 +74,24 @@ mcp = FastMCP("simpy_blocks", instructions=INSTRUCTIONS)
 register_tools(mcp)
 
 
+def _private_stdin() -> None:
+    """Move the request pipe off fd 0 and give fd 0 the null device.
+
+    Child processes (the replication workers) get fd 0 as their stdin. On
+    Windows a child cannot start while a thread of this process is blocked
+    reading that pipe, so a worker pool never comes up. The MCP server reads
+    `sys.stdin`, which keeps the pipe on a private descriptor.
+    """
+    private = os.dup(0)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    sys.stdin = os.fdopen(private, "r", encoding="utf-8")
+
+
 def main() -> None:
     configure_telemetry()
+    _private_stdin()
     mcp.run()
 
 
