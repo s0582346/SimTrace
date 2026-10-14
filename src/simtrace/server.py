@@ -38,7 +38,13 @@ Modeling patterns:
   rework, let an edge lead back to an earlier station.
 - Priority: a machine with in_edge_selection="FIRST_AVAILABLE" drains its
   in-edges in connect order — connect the higher-priority type's buffer
-  first. Non-preemptive: a running job is never interrupted.
+  first. Non-preemptive: a running job is never interrupted by another item.
+- Breakdowns (MTBF/MTTR): create_machine(time_to_failure="exp(<MTBF>)",
+  repair_time="exp(<MTTR>)"), e.g. "exp(480)" and "exp(30)" in minutes. The
+  time to failure runs on the simulation clock, whatever the machine is doing.
+  A breakdown stops the whole machine and the item being processed finishes its
+  remaining time after the repair. run_simulation reports num_breakdowns and
+  time_down per machine.
 - Passive waiting (curing, cooling, drying, ovens): the buffer's own delay
   with a capacity, not a machine.
 - N identical machines, one shared queue ("any free machine takes the next

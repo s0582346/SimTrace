@@ -47,7 +47,9 @@ class Machine(Node):
                     - "ROUND_ROBIN": Selects out edges in a round-robin manner.
                     - "FIRST_AVAILABLE": Selects the first out edge that can accept an item.
                 - callable: A function that gets the item and returns an edge index.
-            
+            time_to_failure (None, int, float, Generator, Callable): Time from the end of one repair (or of the setup) to the next breakdown, on the simulation clock. None means the machine never breaks down.
+            repair_time (None, int, float, Generator, Callable): Time a breakdown lasts. Needed with time_to_failure.
+
 
         Behavior:
             The machine node represents components that process or modify the items that flow in the simulation model. It can have multiple incoming edges
@@ -56,6 +58,9 @@ class Machine(Node):
             `BLOCKED_STATE`. The machine has a blocking behavior if `blocking`=`True` and gets blocked when all its worker threads have processed items and the out edge is full and 
             cannot accept the item that is being pushed by the machine and waits until the out edge can accept the item. If `blocking`=`False`, the machine will 
             discard the item if the out edge is full and cannot accept the item that is being pushed by the machine.
+            With `time_to_failure` set, the whole machine breaks down after each sampled time to failure. Items being processed
+            stop and finish their remaining processing time after the repair. No item is pulled from an in edge while the machine
+            is down. A processed item waiting for space in an out edge still leaves during a breakdown.
 
 
         Raises:
@@ -67,10 +72,12 @@ class Machine(Node):
             num_item_processed        : Total number of items generated.
             num_item_discarded        : Total number of items discarded.
             total_time_spent_in_states: Dictionary with total time spent in each state.
-                
+            num_breakdowns            : Number of breakdowns started (only with time_to_failure).
+            time_down                 : Total time spent broken down (only with time_to_failure).
+
     """
 
-    def __init__(self, env, id, in_edges=None, out_edges=None,node_setup_time=0, work_capacity=1,processing_delay=0,blocking=True,in_edge_selection="FIRST_AVAILABLE",out_edge_selection="FIRST_AVAILABLE"):
+    def __init__(self, env, id, in_edges=None, out_edges=None,node_setup_time=0, work_capacity=1,processing_delay=0,blocking=True,in_edge_selection="FIRST_AVAILABLE",out_edge_selection="FIRST_AVAILABLE",time_to_failure=None,repair_time=None):
         super().__init__(env, id,in_edges, out_edges, node_setup_time)
         
         
@@ -101,8 +108,21 @@ class Machine(Node):
         
         self.stats={"total_time_spent_in_states": {"SETUP_STATE": 0.0, "IDLE_STATE":0.0, "ATLEAST_ONE_PROCESSING_STATE": 0.0,  "ALL_ACTIVE_BLOCKED_STATE":0.0, "ALL_ACTIVE_PROCESSING_STATE":0.0 ,"ATLEAST_ONE_BLOCKED_STATE":0.0 },
                     "last_state_change_time": None, "num_item_processed": 0, "num_item_discarded": 0,"processing_delay":[], "in_edge_selection":[],"out_edge_selection":[]}
-       
-     
+
+        # Breakdowns: both times or neither.
+        if (time_to_failure is None) != (repair_time is None):
+            raise ValueError("time_to_failure and repair_time must be given together.")
+        self.time_to_failure = time_to_failure
+        self.repair_time = repair_time
+        self.down = False  # True while the machine is broken down
+        self.down_since = None  # start of the downtime not yet added to time_down
+        self.repaired = None  # event that fires when the current repair ends
+        if time_to_failure is not None:
+            self.stats["total_time_spent_in_states"]["BREAKDOWN_STATE"] = 0.0
+            self.stats["num_breakdowns"] = 0
+            self.stats["time_down"] = 0.0
+
+
         
 
         
@@ -135,27 +155,31 @@ class Machine(Node):
         
         if self.state_rep is not None and self.stats["last_state_change_time"] is not None:
             elapsed = current_time - self.stats["last_state_change_time"]
-            # all idle
-            if previous_state_rep == (0, 0):
-                self.stats["total_time_spent_in_states"]["IDLE_STATE"] += elapsed
-                self.total_time_idle += elapsed
+            # broken down: the time counts for no other state
+            if self.down:
+                self.stats["total_time_spent_in_states"]["BREAKDOWN_STATE"] += elapsed
+            else:
+                # all idle
+                if previous_state_rep == (0, 0):
+                    self.stats["total_time_spent_in_states"]["IDLE_STATE"] += elapsed
+                    self.total_time_idle += elapsed
 
-            # all active are blocked and none processing
-            if previous_state_rep[1] > 0 and previous_state_rep[0] == 0:
-                self.stats["total_time_spent_in_states"]["ALL_ACTIVE_BLOCKED_STATE"] += elapsed
-                self.total_time_all_blocked += elapsed
-            # at least one processing 
-            if previous_state_rep[0]>0  :
-                self.stats["total_time_spent_in_states"]["ATLEAST_ONE_PROCESSING_STATE"] += elapsed
-                self.total_time_atleast_one_processing += elapsed
-            # all active are processing and none blocked
-            if previous_state_rep[0]>0  and previous_state_rep[1]==0:
-                self.stats["total_time_spent_in_states"]["ALL_ACTIVE_PROCESSING_STATE"] += elapsed
-                self.total_time_all_processing += elapsed
-            #at least one blocked
-            if previous_state_rep[1] > 0:
-                self.stats["total_time_spent_in_states"]["ATLEAST_ONE_BLOCKED_STATE"] += elapsed
-                self.total_time_atleast_one_blocked += elapsed
+                # all active are blocked and none processing
+                if previous_state_rep[1] > 0 and previous_state_rep[0] == 0:
+                    self.stats["total_time_spent_in_states"]["ALL_ACTIVE_BLOCKED_STATE"] += elapsed
+                    self.total_time_all_blocked += elapsed
+                # at least one processing
+                if previous_state_rep[0]>0  :
+                    self.stats["total_time_spent_in_states"]["ATLEAST_ONE_PROCESSING_STATE"] += elapsed
+                    self.total_time_atleast_one_processing += elapsed
+                # all active are processing and none blocked
+                if previous_state_rep[0]>0  and previous_state_rep[1]==0:
+                    self.stats["total_time_spent_in_states"]["ALL_ACTIVE_PROCESSING_STATE"] += elapsed
+                    self.total_time_all_processing += elapsed
+                #at least one blocked
+                if previous_state_rep[1] > 0:
+                    self.stats["total_time_spent_in_states"]["ATLEAST_ONE_BLOCKED_STATE"] += elapsed
+                    self.total_time_atleast_one_blocked += elapsed
 
             num_processing, num_blocked = self._count_worker_state()
             self.state_rep = (num_processing, num_blocked)
@@ -520,15 +544,67 @@ class Machine(Node):
         self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
         self.update_state_rep(self.env.now)
 
+    def _wait_while_down(self):
+        # Returns at once when the machine is up, else after the repair.
+        while self.down:
+            yield self.repaired
+
+    def settle_breakdown(self, current_time):
+        """Add the downtime up to `current_time` to `time_down`.
+
+        Called at the end of each repair and when a run stops during a breakdown.
+        """
+        if self.down:
+            self.stats["time_down"] += current_time - self.down_since
+            self.down_since = current_time
+
+    def _breakdowns(self):
+        # One breakdown at a time: the next time to failure starts after the repair.
+        while True:
+            yield self.env.timeout(self.get_delay(self.time_to_failure))
+            self.update_state_rep(self.env.now)
+            self.down = True
+            self.down_since = self.env.now
+            self.repaired = self.env.event()
+            self.stats["num_breakdowns"] += 1
+            print(f"T={self.env.now:.2f}: {self.id} breaks down")
+            # Stop the items being processed; blocked items may still leave.
+            for proc in self.worker_thread_list:
+                if getattr(proc, "in_processing", False):
+                    proc.interrupt()
+            yield self.env.timeout(self.get_delay(self.repair_time))
+            self.settle_breakdown(self.env.now)
+            self.update_state_rep(self.env.now)
+            self.down = False
+            self.down_since = None
+            print(f"T={self.env.now:.2f}: {self.id} is repaired")
+            self.repaired.succeed()
+
     def worker(self,item,processing_delay,req_token,):
         #Worker process that processes items with resource and reserve handling."""
             #1self.check_thread_state_and_update_machine_state()  # Check and update the machine state based on worker states
             self.update_state_rep(self.env.now)
             processing_start_time = self.env.now
             #wait for processing_delay amount of time
-            yield self.env.timeout(processing_delay)
+            # A breakdown stops the timeout; the remaining time runs after the repair.
+            this_worker = self.env.active_process
+            remaining = processing_delay
+            time_down = 0.0
+            while True:
+                down_start = self.env.now
+                yield from self._wait_while_down()
+                time_down += self.env.now - down_start
+                run_start = self.env.now
+                this_worker.in_processing = True
+                try:
+                    yield self.env.timeout(remaining)
+                    break
+                except simpy.Interrupt:
+                    remaining -= self.env.now - run_start
+                finally:
+                    this_worker.in_processing = False
             #self.stats["num_item_processed"] += 1
-            self._update_avg_time_spent_in_processing(self.env.now - processing_start_time)  # Update the average time spent in processing
+            self._update_avg_time_spent_in_processing(self.env.now - processing_start_time - time_down)  # Update the average time spent in processing
           
                #out_edge_selection is "FIRST_AVAILABLE"---> 
             if self.out_edge_selection == "FIRST_AVAILABLE":
@@ -702,6 +778,9 @@ class Machine(Node):
                 print(f"T={self.env.now:.2f}: {self.id} completed setup")
                 self.update_state_rep(self.env.now)
                 #self.update_state("IDLE_STATE", self.env.now)
+                # The time to the first breakdown starts after the setup.
+                if self.time_to_failure is not None:
+                    self.env.process(self._breakdowns())
 
             else:
                
@@ -786,7 +865,9 @@ class Machine(Node):
                             
                         #self.in_edge_events=[]
 
-                    
+                    # The item stays reserved in the in_edge until the repair ends.
+                    yield from self._wait_while_down()
+
 
                     ####---3/9 Create workers based on work_capacity
                     # worker_thread_req = self.worker_thread.request()  # Request a worker thread
@@ -831,6 +912,8 @@ class Machine(Node):
                         get_token = outstore.reserve_get()
                         yield get_token
                         print(f"T={self.env.now:.2f}: {self.id} yielded from {in_edge_to_get.id} ")
+                        # The item stays reserved in the in_edge until the repair ends.
+                        yield from self._wait_while_down()
                          # Create workers based on work_capacity
                         #worker_thread_req = self.worker_thread.request()  # Request a worker thread
                         #yield worker_thread_req

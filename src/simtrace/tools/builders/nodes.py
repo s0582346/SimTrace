@@ -192,6 +192,27 @@ def create_sink(
     }
 
 
+def _resolve_breakdowns(
+    time_to_failure: float | str | None, repair_time: float | str | None
+) -> tuple:
+    """Validate the breakdown pair and resolve each to a number or sampler.
+
+    Returns (None, None) when neither is given. A constant time_to_failure
+    must be > 0 and a constant repair_time >= 0.
+    """
+    if time_to_failure is None and repair_time is None:
+        return None, None
+    if time_to_failure is None or repair_time is None:
+        raise ValueError("time_to_failure and repair_time must be given together.")
+    resolved_failure = resolve_delay("time_to_failure", time_to_failure)
+    resolved_repair = resolve_delay("repair_time", repair_time)
+    if isinstance(resolved_failure, (int, float)) and resolved_failure <= 0:
+        raise ValueError(f"time_to_failure must be > 0 (got {time_to_failure!r}).")
+    if isinstance(resolved_repair, (int, float)) and resolved_repair < 0:
+        raise ValueError(f"repair_time must be >= 0 (got {repair_time!r}).")
+    return resolved_failure, resolved_repair
+
+
 def create_machine(
     id: str,
     work_capacity: int = 1,
@@ -203,6 +224,8 @@ def create_machine(
     route_by: str | None = None,
     routes: dict[str, str | list[str]] | None = None,
     route_shares: dict[str, float] | None = None,
+    time_to_failure: float | str | None = None,
+    repair_time: float | str | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -240,6 +263,17 @@ def create_machine(
             add up to 1. Cannot be combined with route_by. Leave
             out_edge_selection at its default; route_shares takes over that
             job.
+        time_to_failure: needs repair_time. Time from the end of one repair
+            (or of the setup) to the next breakdown, on the simulation clock,
+            whatever the machine is doing. Constant (> 0) or a distribution
+            string, e.g. "exp(480)" for an MTBF of 480. None means the machine
+            never breaks down. A breakdown stops the whole machine: items
+            being processed finish their remaining time after the repair, no
+            item is pulled in, and a processed item waiting for space may
+            still leave.
+        repair_time: needs time_to_failure. Time one breakdown lasts.
+            Constant (>= 0) or a distribution string, e.g. "exp(30)" for an
+            MTTR of 30.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -268,6 +302,9 @@ def create_machine(
         route_by, routes, out_edge_selection, blocking
     )
     resolved_shares = resolve_shares(route_shares, route_by, out_edge_selection)
+    resolved_failure, resolved_repair = _resolve_breakdowns(
+        time_to_failure, repair_time
+    )
 
     node = Machine(
         env=model.env,
@@ -278,6 +315,8 @@ def create_machine(
         blocking=blocking,
         in_edge_selection=in_edge_selection,
         out_edge_selection=out_edge_selection,
+        time_to_failure=resolved_failure,
+        repair_time=resolved_repair,
     )
     # The rule as given; the selector below is what the Machine calls.
     node.route_by = route_by
@@ -302,6 +341,8 @@ def create_machine(
             "route_by": route_by,
             "routes": routes,
             "route_shares": route_shares,
+            "time_to_failure": time_to_failure,
+            "repair_time": repair_time,
         },
     )
 
@@ -317,6 +358,8 @@ def create_machine(
         "route_by": route_by,
         "routes": routes,
         "route_shares": route_shares,
+        "time_to_failure": time_to_failure,
+        "repair_time": repair_time,
         "in_edges": 0,
         "out_edges": 0,
     }

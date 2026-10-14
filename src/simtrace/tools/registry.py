@@ -118,6 +118,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         route_by: str | None = None,
         routes: dict[str, str | list[str]] | None = None,
         route_shares: dict[str, float] | None = None,
+        time_to_failure: float | str | None = None,
+        repair_time: float | str | None = None,
     ) -> dict:
         """Create a Machine node that processes flow items.
 
@@ -161,6 +163,17 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 the edge for each item. An edge may lead anywhere, also back
                 to an earlier station for rework. Not with route_by or
                 out_edge_selection.
+            time_to_failure: needs repair_time. Uptime from the end of the
+                setup or of a repair to the next breakdown, drawn anew each
+                time and counted even while the machine is idle or blocked.
+                Constant (> 0) or a distribution string, e.g. "exp(480)". 
+                If the MTBF includes the repair time, use MTBF - MTTR.
+                During a breakdown, items being processed pause and finish
+                their remaining time after the repair.
+            repair_time: needs time_to_failure. Time one breakdown lasts.
+                Constant (>= 0) or a distribution string; for an MTTR of 30
+                use "exp(30)". run_simulation then reports num_breakdowns,
+                time_down and BREAKDOWN_STATE for this machine.
         """
         return builders.create_machine(
             id=id,
@@ -173,6 +186,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             route_by=route_by,
             routes=routes,
             route_shares=route_shares,
+            time_to_failure=time_to_failure,
+            repair_time=repair_time,
         )
 
     @mcp.tool()
@@ -440,7 +455,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
         Args:
             until: simulation end time for each run; must be a positive number.
-            replications: number of independent runs; an int in [2, 20]. 10 is
+            replications: number of independent runs; an int in [2, 100]. 10 is
                 a reasonable default; more narrows the confidence intervals.
             random_seed_base: base RNG seed. Replication i uses
                 `random_seed_base + i * 1000`, so the whole batch replays
@@ -456,14 +471,6 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         `failures` (any runs that raised, with their seeds), and `execution`
         (how many cores the batch actually used).
         """
-        # Tighter than the Python API's 100: one tool call runs `replications`
-        # full simulations, and `until` is unbounded.
-        if isinstance(replications, bool) or not isinstance(replications, int):
-            raise ValueError(f"replications must be an int (got {replications!r}).")
-        if not 2 <= replications <= 20:
-            raise ValueError(
-                f"replications must be between 2 and 20 (got {replications})."
-            )
         return simulation.run_replications(
             until=until,
             replications=replications,
@@ -476,7 +483,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         until: float,
         target_metrics: list[str] | None = None,
         desired_precision: float = 0.10,
-        replication_budget: int = 20,
+        replication_budget: int = 50,
         random_seed_base: int = 0,
     ) -> dict:
         """Find how many replications a stochastic model needs, by running it.
@@ -499,7 +506,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             desired_precision: how tight the interval must be, as a share of the
                 mean. 0.10 means "within +/-10% of the mean" and is the usual
                 figure; 0.05 is stricter and costs roughly four times the runs.
-            replication_budget: where the search gives up, an int in [2, 20].
+            replication_budget: where the search gives up, an int in [2, 100].
             random_seed_base: base RNG seed, so a search replays exactly.
 
         Returns a dict with `replications_needed` (per metric, or null where the
@@ -510,19 +517,6 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         When `converged` is false, say so and report what precision was reached
         instead of quoting a mean as if it were settled.
         """
-        # Same ceiling as run_replications: a count this tool recommends has to
-        # be one that tool will accept.
-        if isinstance(replication_budget, bool) or not isinstance(
-            replication_budget, int
-        ):
-            raise ValueError(
-                f"replication_budget must be an int (got {replication_budget!r})."
-            )
-        if not 2 <= replication_budget <= 20:
-            raise ValueError(
-                f"replication_budget must be between 2 and 20 (got "
-                f"{replication_budget})."
-            )
         return simulation.find_replication_count(
             until=until,
             target_metrics=target_metrics,
