@@ -629,6 +629,57 @@ def test_second_sorter_gets_a_family_it_has_no_route_for(model):
     assert "src_B" in unmatched[0]["message"]
 
 
+def test_list_route_that_fits_is_quiet(model):
+    create_machine("sort", route_by="family",
+                   routes={"A": ["b_a1", "b_a2"], "B": "b_b"}, model=model)
+    family_sources(model, into="sort")
+    for edge_id in ("b_a1", "b_a2", "b_b"):
+        create_sink(f"snk_{edge_id}", model=model)
+        wire(model, edge_id, "sort", f"snk_{edge_id}")
+
+    report = validate_model(model=model)
+
+    assert report["valid"]
+    assert report["errors"] == [] and report["warnings"] == []
+
+
+def test_list_route_to_an_edge_the_machine_is_not_wired_to(model):
+    create_machine("sort", route_by="family",
+                   routes={"A": ["b_a1", "b_stray"], "B": "b_b"}, model=model)
+    family_sources(model, into="sort")
+    for edge_id in ("b_a1", "b_b"):
+        create_sink(f"snk_{edge_id}", model=model)
+        wire(model, edge_id, "sort", f"snk_{edge_id}")
+
+    report = validate_model(model=model)
+
+    targets = [f for f in report["errors"] if f["check"] == "route_target"]
+    assert len(targets) == 1
+    assert "b_stray" in targets[0]["message"]
+    assert "route_unused_edge" not in checks(report["warnings"])
+
+
+def test_items_follow_every_edge_of_a_list(model):
+    # A may also take b_a2 into sort2, which only has a route for B.
+    create_machine("sort", route_by="family",
+                   routes={"A": ["b_a1", "b_a2"], "B": "b_b"}, model=model)
+    create_machine("sort2", route_by="family", routes={"B": "b_out"}, model=model)
+    create_sink("snk_a", model=model)
+    create_sink("snk_b", model=model)
+    create_sink("snk_out", model=model)
+    family_sources(model, into="sort")
+    wire(model, "b_a1", "sort", "snk_a")
+    wire(model, "b_a2", "sort", "sort2")
+    wire(model, "b_out", "sort2", "snk_out")
+    wire(model, "b_b", "sort", "snk_b")
+
+    report = validate_model(model=model)
+
+    unmatched = [f for f in report["errors"] if f["check"] == "route_unmatched"]
+    assert [f["component"] for f in unmatched] == ["sort2"]
+    assert "src_A" in unmatched[0]["message"]
+
+
 # --- route shares and loops ---------------------------------------------------
 
 

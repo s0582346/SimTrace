@@ -116,7 +116,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         out_edge_selection: str = "FIRST_AVAILABLE",
         node_setup_time: float = 0,
         route_by: str | None = None,
-        routes: dict[str, str] | None = None,
+        routes: dict[str, str | list[str]] | None = None,
         route_shares: dict[str, float] | None = None,
     ) -> dict:
         """Create a Machine node that processes flow items.
@@ -145,13 +145,17 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 attributes=...). Leave out_edge_selection at its default;
                 route_by and routes take over that job.
             routes: needs route_by. Attribute value -> id of one of this
-                machine's out-edges, e.g. {"A": "b_paint", "B": "b_drill"}.
-                The key "*" sends every other value to one edge. Only string
-                values match. An item with no matching route and no "*" stops
-                the run with an error. When the target edge is full, the
-                machine waits (blocking=True) or discards the item
-                (blocking=False); no other edge is tried. Use
-                processing_delay=0 for a machine that only sorts.
+                machine's out-edges, e.g. {"A": "b_paint", "B": "b_drill"},
+                or a list of out-edge ids the value may use, e.g.
+                {"alu": ["b_m1", "b_m2"], "*": "b_m3"}. With a list, the
+                machine waits on all listed edges and puts the item into the
+                first that has space; the earlier one in the list wins a tie.
+                A list needs blocking=True. The key "*" catches every other
+                value. Only string values match. An item with no matching
+                route and no "*" stops the run with an error. When a single
+                target edge is full, the machine waits (blocking=True) or
+                discards the item (blocking=False); no other edge is tried.
+                Use processing_delay=0 for a machine that only sorts.
             route_shares: out-edge id -> share of items sent there, adding up
                 to 1, e.g. {"b_ship": 0.95, "b_scrap": 0.05}. Chance picks
                 the edge for each item. An edge may lead anywhere, also back

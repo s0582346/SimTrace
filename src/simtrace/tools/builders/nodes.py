@@ -201,7 +201,7 @@ def create_machine(
     out_edge_selection: str = "FIRST_AVAILABLE",
     node_setup_time: float = 0,
     route_by: str | None = None,
-    routes: dict[str, str] | None = None,
+    routes: dict[str, str | list[str]] | None = None,
     route_shares: dict[str, float] | None = None,
     *,
     model: FactoryModel | None = None,
@@ -210,7 +210,8 @@ def create_machine(
 
     A Machine processes items. It needs at least one in_edge and one out_edge
     (both wired later via connect). With `route_by` set, the machine sends each
-    item to the out-edge that `routes` gives for the item's attribute value.
+    item to the out-edge that `routes` gives for the item's attribute value,
+    or to the first free one of the out-edges it lists.
     With `route_shares` set, chance picks each item's out-edge, weighted by
     the shares.
     Args:
@@ -230,9 +231,11 @@ def create_machine(
         route_by: needs routes. Name of the item attribute that decides the
             out-edge, e.g. "family" or "part_type".
         routes: needs route_by. Attribute value -> id of one of this machine's
-            out-edges. The key "*" catches every other value. Only string
-            values match. Leave out_edge_selection at its default; routes
-            takes over that job.
+            out-edges, or a list of such ids. With a list, the machine waits
+            on all of them and takes the first that has space; the earlier
+            one in the list wins a tie. A list needs blocking=True. The key
+            "*" catches every other value. Only string values match. Leave
+            out_edge_selection at its default; routes takes over that job.
         route_shares: out-edge id -> share of items sent there; the shares
             add up to 1. Cannot be combined with route_by. Leave
             out_edge_selection at its default; route_shares takes over that
@@ -261,7 +264,9 @@ def create_machine(
         raise ValueError("in_edge_selection must be a string (v1).")
     if not isinstance(out_edge_selection, str):
         raise ValueError("out_edge_selection must be a string (v1).")
-    resolved_routes = resolve_routes(route_by, routes, out_edge_selection)
+    resolved_routes = resolve_routes(
+        route_by, routes, out_edge_selection, blocking
+    )
     resolved_shares = resolve_shares(route_shares, route_by, out_edge_selection)
 
     node = Machine(

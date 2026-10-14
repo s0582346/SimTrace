@@ -219,3 +219,158 @@ def test_parallel_workers_route_their_own_item(model):
             assert ends[item_id] == expected
             checked += 1
     assert checked > 50
+
+
+# --- list routes: type picks the edges, the first free one takes the item -------
+
+
+def _alu_steel_line(
+    model: FactoryModel,
+    alu_every: float,
+    m1_delay: float,
+    m2_delay: float,
+    routes: dict | None = None,
+) -> FactoryModel:
+    """Alu and steel sources into one sorter; alu may use m1 or m2, steel m3.
+
+    Each station m1, m2, m3 has its own buffer of capacity 1 and its own sink
+    "snk_<station>".
+    """
+    for src_id, every in (("alu", alu_every), ("steel", 20)):
+        create_source(src_id, inter_arrival_time=every, blocking=True,
+                      part_type=src_id, model=model)
+        create_buffer(f"b_{src_id}", capacity=50, model=model)
+    create_machine(
+        "sort", processing_delay=0.1, route_by="part_type",
+        routes=routes or {"alu": ["b_m1", "b_m2"], "steel": "b_m3"},
+        model=model,
+    )
+    for src_id in ("alu", "steel"):
+        connect(f"b_{src_id}", src_id, "sort", model=model)
+    for station, delay in (("m1", m1_delay), ("m2", m2_delay), ("m3", 1)):
+        create_buffer(f"b_{station}", capacity=1, model=model)
+        create_machine(station, processing_delay=delay, model=model)
+        create_buffer(f"b_{station}_out", capacity=1, model=model)
+        create_sink(f"snk_{station}", model=model)
+        connect(f"b_{station}", "sort", station, model=model)
+        connect(f"b_{station}_out", station, f"snk_{station}", model=model)
+    return model
+
+
+def _delivered(model: FactoryModel) -> dict[str, list[str]]:
+    """Part type -> the sinks its delivered items ended at."""
+    by_type: dict[str, list[str]] = {}
+    for item_id, end in _ends(model).items():
+        if end.startswith("snk_"):
+            part_type = model.item_attributes[item_id]["part_type"]
+            by_type.setdefault(part_type, []).append(end)
+    return by_type
+
+
+def test_list_route_is_echoed_recorded_and_copied(model):
+    routes = {"alu": ["b_m1", "b_m2"], "*": "b_m3"}
+    summary = create_machine("m", route_by="part_type", routes=routes, model=model)
+    routes["alu"].append("b_extra")
+
+    assert model.nodes["m"].routes == {"alu": ["b_m1", "b_m2"], "*": "b_m3"}
+    assert summary["routes"]["alu"][:2] == ["b_m1", "b_m2"]
+    assert model.spec[-1]["kwargs"]["route_by"] == "part_type"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"routes": {"alu": []}},
+        {"routes": {"alu": ["b_m1", "b_m1"]}},
+        {"routes": {"alu": ["b_m1", ""]}},
+        {"routes": {"alu": ["b_m1", 3]}},
+        {"routes": {"alu": ["b_m1", "b_m2"]}, "blocking": False},
+    ],
+)
+def test_machine_rejects_bad_list_routes(model, kwargs):
+    with pytest.raises(ValueError):
+        create_machine("m", route_by="part_type", model=model, **kwargs)
+    assert "m" not in model.nodes
+
+
+def test_single_edge_route_still_picks_one_index(model):
+    _alu_steel_line(model, alu_every=5, m1_delay=1, m2_delay=1)
+    select = model.nodes["sort"].out_edge_selection
+
+    class Item:
+        id = "x"
+
+    alu, steel = Item(), Item()
+    alu.payload = {"part_type": "alu"}
+    steel.payload = {"part_type": "steel"}
+
+    assert select(steel) == 2
+    assert select(alu) == [0, 1]
+
+
+def test_first_listed_edge_wins_while_it_is_free(model):
+    # Alu arrives every 10, m1 needs 1: m1 is always free again in time.
+    _alu_steel_line(model, alu_every=10, m1_delay=1, m2_delay=1)
+    run_simulation(200, seed=1, model=model)
+
+    delivered = _delivered(model)
+    assert len(delivered["alu"]) > 10
+    assert set(delivered["alu"]) == {"snk_m1"}
+
+
+def test_full_first_edge_sends_alu_to_the_second(model):
+    # Alu arrives every 1, m1 needs 10: b_m1 is full most of the time.
+    _alu_steel_line(model, alu_every=1, m1_delay=10, m2_delay=1)
+    run_simulation(200, seed=1, model=model)
+
+    delivered = _delivered(model)
+    assert delivered["alu"].count("snk_m1") > 5
+    assert delivered["alu"].count("snk_m2") > 5
+
+
+def test_when_both_are_full_the_one_that_frees_first_takes_it(model):
+    # Both alu stations are overloaded. m2 is five times faster, so it frees
+    # up about five times as often and gets about five times as many items.
+    # Waiting at m1 only would send most items to m1 instead.
+    _alu_steel_line(model, alu_every=0.5, m1_delay=10, m2_delay=2)
+    run_simulation(400, seed=1, model=model)
+
+    delivered = _delivered(model)
+    to_m1 = delivered["alu"].count("snk_m1")
+    to_m2 = delivered["alu"].count("snk_m2")
+    assert to_m1 > 10
+    assert to_m2 >= 3 * to_m1
+
+
+def test_type_never_enters_an_edge_outside_its_list(model):
+    # m1 stays full and m3 is mostly empty; alu still never uses m3, and
+    # steel never uses m1 or m2.
+    _alu_steel_line(model, alu_every=1, m1_delay=10, m2_delay=1)
+    run_simulation(400, seed=1, model=model)
+
+    delivered = _delivered(model)
+    assert delivered["alu"].count("snk_m1") > 10
+    assert "snk_m3" not in delivered["alu"]
+    assert len(delivered["steel"]) > 10
+    assert set(delivered["steel"]) == {"snk_m3"}
+
+
+def test_list_route_under_fallback(model):
+    _alu_steel_line(model, alu_every=1, m1_delay=10, m2_delay=1,
+                    routes={"steel": "b_m3", "*": ["b_m1", "b_m2"]})
+    run_simulation(200, seed=1, model=model)
+
+    delivered = _delivered(model)
+    assert set(delivered["alu"]) == {"snk_m1", "snk_m2"}
+    assert set(delivered["steel"]) == {"snk_m3"}
+
+
+def test_rebuild_keeps_list_routes(model):
+    _alu_steel_line(model, alu_every=1, m1_delay=10, m2_delay=1)
+    first = run_simulation(200, seed=3, model=model)
+
+    replica = build_from_spec(model.spec)
+    second = run_simulation(200, seed=3, model=replica)
+
+    assert second["nodes"] == first["nodes"]
+    assert _ends(replica) == _ends(model)

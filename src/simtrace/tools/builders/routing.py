@@ -1,8 +1,11 @@
 """Routing: a Machine picks its out-edge by item attribute or by chance.
 
 `create_machine(route_by=..., routes=...)` names the attribute to read and
-maps each of its values to the id of one of the machine's out-edges. The key
-"*" is an optional fallback for every other value.
+maps each of its values to the id of one of the machine's out-edges, or to a
+list of such ids. The key "*" is an optional fallback for every other value.
+With a list, the Machine waits on all edges in it and puts the item into the
+first one that has space; when several have space, the earlier one in the list
+wins. A list needs blocking=True.
 
 `create_machine(route_shares=...)` maps out-edge ids to shares that add up to
 1, e.g. {"b_ship": 0.95, "b_scrap": 0.05}. For each item, chance picks the
@@ -11,11 +14,12 @@ seed passed to run_simulation makes them repeatable.
 
 When a worker is about to hand its item on, FactorySimPy's Machine calls a
 callable `out_edge_selection` with that item (`Machine._get_out_edge_index`).
-`route_selector` builds that callable.
+`route_selector` builds that callable. It returns one edge index, or a list of
+indices for a list route (`Machine._put_into_first_free`).
 
-Only string attribute values match a route. When the target edge is full, the
-Machine waits (blocking=True) or discards the item (blocking=False); no other
-edge is tried.
+Only string attribute values match a route. When a single target edge is full,
+the Machine waits (blocking=True) or discards the item (blocking=False); no
+other edge is tried.
 """
 
 from __future__ import annotations
@@ -29,9 +33,10 @@ FALLBACK = "*"
 
 def resolve_routes(
     route_by: str | None,
-    routes: dict[str, str] | None,
+    routes: dict[str, str | list[str]] | None,
     out_edge_selection: str,
-) -> dict[str, str] | None:
+    blocking: bool = True,
+) -> dict[str, str | list[str]] | None:
     """Validate a Machine's routing rule; return a copy of `routes` or None."""
     # No routing rule: the machine keeps its normal out_edge_selection.
     if route_by is None and routes is None:
@@ -46,18 +51,41 @@ def resolve_routes(
         raise ValueError("route_by must be a non-empty string.")
     if not isinstance(routes, dict) or not routes:
         raise ValueError("routes must be a non-empty dict of value -> edge id.")
-    for value, edge_id in routes.items():
+    for value, target in routes.items():
         if not isinstance(value, str) or not value:
             raise ValueError("route values must be non-empty strings.")
-        if not isinstance(edge_id, str) or not edge_id:
-            raise ValueError(f"routes[{value!r}] must be a non-empty edge id.")
+        if isinstance(target, list):
+            # A list: the edges the item may take, tried in this order.
+            if not target:
+                raise ValueError(f"routes[{value!r}] must not be an empty list.")
+            for edge_id in target:
+                if not isinstance(edge_id, str) or not edge_id:
+                    raise ValueError(
+                        f"routes[{value!r}] must list non-empty edge ids."
+                    )
+            if len(set(target)) != len(target):
+                raise ValueError(f"routes[{value!r}] names an edge twice.")
+            # Without blocking, there is no waiting for the first free edge.
+            if not blocking:
+                raise ValueError(
+                    f"routes[{value!r}] is a list of edges, which needs "
+                    "blocking=True."
+                )
+        elif not isinstance(target, str) or not target:
+            raise ValueError(
+                f"routes[{value!r}] must be a non-empty edge id or a list of them."
+            )
     # The rule takes the place of out_edge_selection, so that must stay unset.
     if out_edge_selection != "FIRST_AVAILABLE":
         raise ValueError(
             "route_by replaces out_edge_selection; leave out_edge_selection at "
             f'"FIRST_AVAILABLE" (got {out_edge_selection!r}).'
         )
-    return dict(routes)
+    # Copy the lists too, so later changes to the caller's lists don't leak in.
+    return {
+        value: list(target) if isinstance(target, list) else target
+        for value, target in routes.items()
+    }
 
 
 def resolve_shares(
@@ -96,37 +124,41 @@ def resolve_shares(
     return dict(route_shares)
 
 
-def pick_edge_id(routes: dict[str, str], value: object) -> str | None:
-    """The edge id `routes` gives for `value`, else the "*" edge, else None."""
+def pick_route(
+    routes: dict[str, str | list[str]], value: object
+) -> str | list[str] | None:
+    """The target `routes` gives for `value`, else the "*" target, else None.
+
+    A target is one edge id or a list of edge ids.
+    """
     # Only string values can match a route.
-    edge_id = routes.get(value) if isinstance(value, str) else None
-    # No match: use the "*" edge if there is one.
-    if edge_id is None:
-        edge_id = routes.get(FALLBACK)
-    return edge_id
+    target = routes.get(value) if isinstance(value, str) else None
+    # No match: use the "*" target if there is one.
+    if target is None:
+        target = routes.get(FALLBACK)
+    return target
+
+
+def target_edge_ids(target: str | list[str] | None) -> list[str]:
+    """The edge ids of a route target as a list; [] for None."""
+    if target is None:
+        return []
+    return list(target) if isinstance(target, list) else [target]
 
 
 def route_selector(
-    machine: object, route_by: str, routes: dict[str, str]
-) -> Callable[[object], int]:
+    machine: object, route_by: str, routes: dict[str, str | list[str]]
+) -> Callable[[object], int | list[int]]:
     """Return the out-edge selector for `machine`.
 
     The selector gets the item and returns the index of the route's edge in
-    `machine.out_edges`. It raises ValueError when the item's value has no route and there is no
-    "*" fallback, or when the route's edge is not an out-edge of the machine.
+    `machine.out_edges`, or a list of indices when the route is a list. It
+    raises ValueError when the item's value has no route and there is no "*"
+    fallback, or when the route names an edge that is not an out-edge of the
+    machine.
     """
 
-    def select(item: object) -> int:
-        # Read the item's value; untyped items have no payload.
-        value = (item.payload or {}).get(route_by)
-        edge_id = pick_edge_id(routes, value)
-        # No route and no "*": stop the run.
-        if edge_id is None:
-            raise ValueError(
-                f"Machine '{machine.id}': item '{item.id}' has "
-                f"{route_by}={value!r}, which no route matches and there is no "
-                f'"{FALLBACK}" fallback.'
-            )
+    def index_of(edge_id: str) -> int:
         # FactorySimPy wants the edge's position in out_edges, not its id.
         for index, edge in enumerate(machine.out_edges):
             if edge.id == edge_id:
@@ -136,6 +168,21 @@ def route_selector(
             f"Machine '{machine.id}': route target '{edge_id}' is not one of "
             "its out-edges."
         )
+
+    def select(item: object) -> int | list[int]:
+        # Read the item's value; untyped items have no payload.
+        value = (item.payload or {}).get(route_by)
+        target = pick_route(routes, value)
+        # No route and no "*": stop the run.
+        if target is None:
+            raise ValueError(
+                f"Machine '{machine.id}': item '{item.id}' has "
+                f"{route_by}={value!r}, which no route matches and there is no "
+                f'"{FALLBACK}" fallback.'
+            )
+        if isinstance(target, list):
+            return [index_of(edge_id) for edge_id in target]
+        return index_of(target)
 
     return select
 

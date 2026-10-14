@@ -25,6 +25,12 @@ Modeling patterns:
   "*": <out-edge id>}). The machine sends each item to the out-edge its
   attribute value names; "*" catches every other value. Merging (several
   in-edges) needs nothing special.
+- Type and state together: a machine without route_by sends every item to
+  its first free out-edge, whatever its type. When a type may only go to some
+  stations, set route_by and list the out-edges that type may use, e.g.
+  routes={"alu": ["b_m1", "b_m2"], "*": "b_m3"}. The machine waits on all
+  listed edges and takes the first that has space; the earlier one in the
+  list wins a tie. Lists need blocking=True.
 - Scrap and rework: create_machine(route_shares={<out-edge id>: <share>, ...})
   sends each item to an edge at random, e.g. {"b_ship": 0.95, "b_scrap":
   0.05}; the shares add up to 1. Put a create_sink(scrap=True) behind the

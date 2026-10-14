@@ -29,7 +29,7 @@ from __future__ import annotations
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
 from simtrace.tools.builders.part_types import make_payload
-from simtrace.tools.builders.routing import FALLBACK, pick_edge_id
+from simtrace.tools.builders.routing import FALLBACK, pick_route, target_edge_ids
 
 _SOURCE_TYPE = "Source"
 _SINK_TYPE = "Sink"
@@ -606,12 +606,13 @@ def _routed_arrivals(
             out_edges = _edge_list(node, "out_edges")
 
             # Routing machine: note that this Source's items arrive here, then
-            # keep only the edge the rule picks for them. No match keeps none.
+            # keep only the edges the rule picks for them. No match keeps none.
             routes = getattr(node, "routes", None)
             if routes is not None:
                 arrivals.setdefault(node_id, []).append((source_id, payload))
-                edge_id = pick_edge_id(routes, payload.get(node.route_by))
-                out_edges = [e for e in out_edges if getattr(e, "id", None) == edge_id]
+                target = pick_route(routes, payload.get(node.route_by))
+                edge_ids = target_edge_ids(target)
+                out_edges = [e for e in out_edges if getattr(e, "id", None) in edge_ids]
 
             # Share machine: parts go on along every edge with a share above 0.
             shares = getattr(node, "route_shares", None)
@@ -642,11 +643,11 @@ def _routed_arrivals(
 def _check_routes(model: FactoryModel, node_types: dict[str, str]) -> list[dict]:
     """Check that each routing machine's rule fits its edges and its parts.
 
-    Three things are checked. Every edge in `routes` must leave this machine.
-    Every part that can arrive must have a route, or there must be a "*"
-    fallback. If either is wrong, the run stops at the first part it affects.
-    And every edge that leaves the machine should appear in `routes`,
-    otherwise no part ever uses it.
+    Three things are checked. Every edge in `routes`, also inside a list,
+    must leave this machine. Every part that can arrive must have a route, or
+    there must be a "*" fallback. If either is wrong, the run stops at the
+    first part it affects. And every edge that leaves the machine should
+    appear in `routes`, otherwise no part ever uses it.
     """
     findings: list[dict] = []
     arrivals = _routed_arrivals(model, node_types)
@@ -660,24 +661,27 @@ def _check_routes(model: FactoryModel, node_types: dict[str, str]) -> list[dict]
         out_ids = [getattr(e, "id", None) for e in _edge_list(node, "out_edges")]
 
         # 1. Every edge in the rule must leave this machine.
-        for value, edge_id in routes.items():
-            if edge_id in out_ids:
-                continue
-            findings.append(
-                _finding(
-                    "route_target",
-                    _ERROR,
-                    node_id,
-                    f"Machine '{node_id}' sends {route_by}={value!r} to "
-                    f"'{edge_id}', which is not one of its out-edges ("
-                    + (", ".join(f"'{e}'" for e in out_ids) or "none")
-                    + "). The run stops at the first item sent there.",
+        named: set[str] = set()
+        for value, target in routes.items():
+            for edge_id in target_edge_ids(target):
+                named.add(edge_id)
+                if edge_id in out_ids:
+                    continue
+                findings.append(
+                    _finding(
+                        "route_target",
+                        _ERROR,
+                        node_id,
+                        f"Machine '{node_id}' sends {route_by}={value!r} to "
+                        f"'{edge_id}', which is not one of its out-edges ("
+                        + (", ".join(f"'{e}'" for e in out_ids) or "none")
+                        + "). The run stops at the first item sent there.",
+                    )
                 )
-            )
 
         # 2. Every edge that leaves this machine should be in the rule.
         for edge_id in out_ids:
-            if edge_id in routes.values():
+            if edge_id in named:
                 continue
             findings.append(
                 _finding(
@@ -693,7 +697,7 @@ def _check_routes(model: FactoryModel, node_types: dict[str, str]) -> list[dict]
         # 3. Every Source whose parts arrive here needs a route or "*".
         for source_id, payload in arrivals.get(node_id, []):
             value = payload.get(route_by)
-            if pick_edge_id(routes, value) is not None:
+            if pick_route(routes, value) is not None:
                 continue
             # Say why the parts don't match, for the message.
             if not payload:

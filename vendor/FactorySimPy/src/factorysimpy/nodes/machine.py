@@ -309,6 +309,13 @@ class Machine(Node):
             val = self.out_edge_selection(item)
         else:
             raise ValueError("out_edge_selection must be a generator or a callable.")   
+        # A list of indices: the worker waits on all of them and takes the
+        # first free one, so the chosen index is recorded there.
+        if isinstance(val, list):
+            assert val, f"{self.id} - out_edge_selection returned an empty list."
+            for index in val:
+                assert 0 <= index < len(self.out_edges), f"{self.id} - Invalid edge index. {index} is not in range. Range must be between {0} and  {len(self.out_edges)-1} for out_edges."
+            return val
         # Check if the value is within the valid range of out_edges
         #print(f"OUT: {val} {len(self.out_edges)}")
         assert 0<= val < len(self.out_edges), f"{self.id} - Invalid edge index. {val} is not in range. Range must be between {0} and  {len(self.out_edges)-1} for out_edges." 
@@ -488,6 +495,31 @@ class Machine(Node):
 
         
 
+    def _put_into_first_free(self, item, edge_indices):
+        # Wait on the out_edges at `edge_indices` at once and put the item into
+        # the first one that has space. Only for blocking=True.
+        if not self.blocking:
+            raise ValueError(f"{self.id} - out_edge_selection may return a list of edges only when blocking=True.")
+        self.env.active_process.thread_state = "BLOCKED_STATE"
+        self.update_state_rep(self.env.now)
+        blocking_start_time = self.env.now
+        candidates = [self.out_edges[index] for index in edge_indices]
+        put_events = [edge.reserve_put() for edge in candidates]
+        yield self.env.any_of(put_events)
+        # Several edges can be free at once; the first in the list wins.
+        chosen_put_event = next(event for event in put_events if event.triggered)
+        for event in put_events:
+            if event is not chosen_put_event:
+                event.resourcename.reserve_put_cancel(event)
+        position = put_events.index(chosen_put_event)
+        self.stats["out_edge_selection"].append(edge_indices[position])
+        item.update_node_event(self.id, self.env, "exit")
+        self.stats["num_item_processed"] += 1
+        candidates[position].put(chosen_put_event, item)
+        print(f"T={self.env.now:.2f}: {self.id} worker puts item {item.id} into {candidates[position].id} ")
+        self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
+        self.update_state_rep(self.env.now)
+
     def worker(self,item,processing_delay,req_token,):
         #Worker process that processes items with resource and reserve handling."""
             #1self.check_thread_state_and_update_machine_state()  # Check and update the machine state based on worker states
@@ -592,38 +624,43 @@ class Machine(Node):
                 print(f"T={self.env.now:.2f}: {self.id} worker processed item: {item.id}")
                 out_edge_index_to_put = self._get_out_edge_index(item)
                 #print("OUT",out_edge_index_to_put)
-                assert 0<=out_edge_index_to_put < len(self.out_edges), f"{self.id} - Invalid edge index. {out_edge_index_to_put} is not in range. Range must be between {0} and  {len(self.out_edges)-1} for in_edges."
-                outedge_to_put = self.out_edges[out_edge_index_to_put]
-                #push the item if not blocking
-                self.env.active_process.thread_state = "BLOCKED_STATE"  # Update the thread state to PROCESSING_STATE BLOCKING
-                #5self.check_thread_state_and_update_machine_state()
-                self.update_state_rep(self.env.now)
-                if self.blocking:
-                    blocking_start_time = self.env.now
-                    print(f"T={self.env.now:.2f}: {self.id} worker is in BLOCKED_STATE")
-                    #yield self.env.process(self._push_item(item, outedge_to_put))
-                    put_event=outedge_to_put.reserve_put()
-                    yield put_event
-                    print(f"T={self.env.now:.2f}: {self.id} yielded and worker is putting item {item.id} into {outedge_to_put.id} " )
-                    item.update_node_event(self.id, self.env, "exit")
-                    self.stats["num_item_processed"] += 1
-                    y=outedge_to_put.put(put_event, item)
-                    if y:
-                     print(f"T={self.env.now:.2f}: {self.id} worker puts item {item.id} into {outedge_to_put.id} ")
-                    self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
-                    #self.check_thread_state_and_update_machine_state()  # Check and update the machine state after blocking
-                #check can_put and only if it succeeds push the item if not blocking
+                # A list of indices: wait on all of these edges at once and put the
+                # item into the first that is free, as FIRST_AVAILABLE does for all edges.
+                if isinstance(out_edge_index_to_put, list):
+                    yield from self._put_into_first_free(item, out_edge_index_to_put)
                 else:
-                    # Check if the out_edge can accept the item
-                    if outedge_to_put.can_put():
+                    assert 0<=out_edge_index_to_put < len(self.out_edges), f"{self.id} - Invalid edge index. {out_edge_index_to_put} is not in range. Range must be between {0} and  {len(self.out_edges)-1} for in_edges."
+                    outedge_to_put = self.out_edges[out_edge_index_to_put]
+                    #push the item if not blocking
+                    self.env.active_process.thread_state = "BLOCKED_STATE"  # Update the thread state to PROCESSING_STATE BLOCKING
+                    #5self.check_thread_state_and_update_machine_state()
+                    self.update_state_rep(self.env.now)
+                    if self.blocking:
                         blocking_start_time = self.env.now
-                        yield self.env.process(self._push_item(item, outedge_to_put))
+                        print(f"T={self.env.now:.2f}: {self.id} worker is in BLOCKED_STATE")
+                        #yield self.env.process(self._push_item(item, outedge_to_put))
+                        put_event=outedge_to_put.reserve_put()
+                        yield put_event
+                        print(f"T={self.env.now:.2f}: {self.id} yielded and worker is putting item {item.id} into {outedge_to_put.id} " )
+                        item.update_node_event(self.id, self.env, "exit")
                         self.stats["num_item_processed"] += 1
-                        print(f"T={self.env.now:.2f}: {self.id} worker puts item {item.id} into {outedge_to_put.id} ")
+                        y=outedge_to_put.put(put_event, item)
+                        if y:
+                         print(f"T={self.env.now:.2f}: {self.id} worker puts item {item.id} into {outedge_to_put.id} ")
                         self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
+                        #self.check_thread_state_and_update_machine_state()  # Check and update the machine state after blocking
+                    #check can_put and only if it succeeds push the item if not blocking
                     else:
-                        print(f"T={self.env.now:.2f}: {self.id} worker is discarding item {item.id} because out_edge {outedge_to_put.id} is full.")
-                        self.stats["num_item_discarded"] += 1
+                        # Check if the out_edge can accept the item
+                        if outedge_to_put.can_put():
+                            blocking_start_time = self.env.now
+                            yield self.env.process(self._push_item(item, outedge_to_put))
+                            self.stats["num_item_processed"] += 1
+                            print(f"T={self.env.now:.2f}: {self.id} worker puts item {item.id} into {outedge_to_put.id} ")
+                            self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
+                        else:
+                            print(f"T={self.env.now:.2f}: {self.id} worker is discarding item {item.id} because out_edge {outedge_to_put.id} is full.")
+                            self.stats["num_item_discarded"] += 1
             # Release the worker thread after processing
             #self.env.active_process.thread_state = "PROCESSING_STATE"  # Update the thread state to PROCESSING_STATE BLOCKING
             #self.check_thread_state_and_update_machine_state()
