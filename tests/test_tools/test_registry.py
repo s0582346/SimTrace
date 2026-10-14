@@ -198,10 +198,21 @@ def test_find_replication_count_budget_capped_at_the_run_limit():
     mcp = FastMCP("test")
     register_tools(mcp)
 
-    with pytest.raises(Exception, match="between 2 and 20"):
+    with pytest.raises(Exception, match="between 2 and 100"):
         asyncio.run(
             mcp.call_tool(
                 "find_replication_count",
-                {"until": 10, "replication_budget": 50},
+                {"until": 10, "replication_budget": 101},
             )
+        )
+
+
+def test_run_replications_accepts_the_python_limit():
+    """The tool takes up to 100 runs, like the Python function behind it."""
+    mcp = FastMCP("test")
+    register_tools(mcp)
+
+    with pytest.raises(Exception, match="between 2 and 100"):
+        asyncio.run(
+            mcp.call_tool("run_replications", {"until": 10, "replications": 101})
         )
