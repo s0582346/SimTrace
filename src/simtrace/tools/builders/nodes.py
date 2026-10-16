@@ -24,6 +24,7 @@ from factorysimpy.nodes.source import Source
 from factorysimpy.nodes.splitter import Splitter
 
 from simtrace.model import FactoryModel, get_model
+from simtrace.tools.builders.calendars import resolve_calendar
 from simtrace.tools.builders.part_types import resolve_part_type
 from simtrace.tools.builders.routing import (
     resolve_routes,
@@ -44,6 +45,7 @@ def create_source(
     node_setup_time: float = 0,
     part_type: str | None = None,
     attributes: dict[str, str | int | float | bool] | None = None,
+    calendar: str | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -74,6 +76,10 @@ def create_source(
         attributes: needs a part_type. Attribute name -> fixed value (a
             string, number or bool), stamped unchanged on every item. The name
             "part_type" is reserved.
+        calendar: id of a shift calendar, or None for arrivals at any time.
+            With a calendar, inter_arrival_time counts working time only, so
+            items arrive only inside a window. The calendar starts after the
+            setup.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -84,6 +90,7 @@ def create_source(
     if model.has_node(id):
         raise ValueError(f"A node with id '{id}' already exists.")
     resolved_attributes = resolve_part_type(part_type, attributes)
+    resolved_calendar = resolve_calendar(model, calendar)
 
     resolved_iat = resolve_delay("inter_arrival_time", inter_arrival_time)
     require_number("item_length", item_length)
@@ -103,6 +110,7 @@ def create_source(
         item_length=item_length,
         blocking=blocking,
         out_edge_selection=out_edge_selection,
+        calendar=resolved_calendar,
     )
     # Source.__init__ doesn't forward node_setup_time to the base Node, so set it
     # explicitly (validated above).
@@ -124,6 +132,7 @@ def create_source(
             "node_setup_time": node_setup_time,
             "part_type": part_type,
             "attributes": attributes,
+            "calendar": calendar,
         },
     )
 
@@ -138,6 +147,7 @@ def create_source(
         "node_setup_time": node_setup_time,
         "part_type": part_type,
         "attributes": attributes,
+        "calendar": calendar,
         "in_edges": 0,
         "out_edges": 0,
     }
@@ -226,6 +236,7 @@ def create_machine(
     route_shares: dict[str, float] | None = None,
     time_to_failure: float | str | None = None,
     repair_time: float | str | None = None,
+    calendar: str | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -274,6 +285,11 @@ def create_machine(
         repair_time: needs time_to_failure. Time one breakdown lasts.
             Constant (>= 0) or a distribution string, e.g. "exp(30)" for an
             MTTR of 30.
+        calendar: id of a shift calendar, or None for a machine that works
+            all the time. Outside a window the machine starts no new item, and
+            items being processed pause and finish their remaining time in the
+            next window. With a calendar, time_to_failure and repair_time count
+            working time only. The calendar starts after the setup.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -305,6 +321,7 @@ def create_machine(
     resolved_failure, resolved_repair = _resolve_breakdowns(
         time_to_failure, repair_time
     )
+    resolved_calendar = resolve_calendar(model, calendar)
 
     node = Machine(
         env=model.env,
@@ -317,6 +334,7 @@ def create_machine(
         out_edge_selection=out_edge_selection,
         time_to_failure=resolved_failure,
         repair_time=resolved_repair,
+        calendar=resolved_calendar,
     )
     # The rule as given; the selector below is what the Machine calls.
     node.route_by = route_by
@@ -343,6 +361,7 @@ def create_machine(
             "route_shares": route_shares,
             "time_to_failure": time_to_failure,
             "repair_time": repair_time,
+            "calendar": calendar,
         },
     )
 
@@ -360,6 +379,7 @@ def create_machine(
         "route_shares": route_shares,
         "time_to_failure": time_to_failure,
         "repair_time": repair_time,
+        "calendar": calendar,
         "in_edges": 0,
         "out_edges": 0,
     }

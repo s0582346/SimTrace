@@ -88,7 +88,8 @@ def get_model(*, model: FactoryModel | None = None) -> dict:
     """Return a JSON-serializable snapshot of the current graph.
 
     Read-only: lists every node (with its in/out edge counts) and every edge
-    (with its resolved src/dest node ids). Never exposes env/simpy objects.
+    (with its resolved src/dest node ids). With shift calendars it also lists
+    them with their windows. Never exposes env/simpy objects.
     """
     model = model if model is not None else get_session_model()
 
@@ -110,4 +111,19 @@ def get_model(*, model: FactoryModel | None = None) -> dict:
         }
         for edge_id, edge in model.edges.items()
     ]
-    return {"nodes": nodes, "edges": edges}
+    snapshot = {"nodes": nodes, "edges": edges}
+    if model.calendars:
+        snapshot["calendars"] = [
+            {
+                "id": calendar_id,
+                "cycle": calendar.cycle,
+                "windows": [list(window) for window in calendar.windows],
+                "used_by": [
+                    node_id
+                    for node_id, node in model.nodes.items()
+                    if getattr(node, "calendar", None) is calendar
+                ],
+            }
+            for calendar_id, calendar in model.calendars.items()
+        ]
+    return snapshot

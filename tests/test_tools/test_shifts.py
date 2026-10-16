@@ -1,7 +1,9 @@
-"""Tests for shift calendars (ShiftCalendar and Machine(calendar=...)).
+"""Tests for shift calendars (ShiftCalendar, Machine and Source with a calendar,
+and create_shift_calendar).
 
-The lines are built directly in FactorySimPy. Every calendar here has a cycle
-of 20 and works from 0 to 10 unless a test says otherwise.
+The first lines are built directly in FactorySimPy, the last ones with the
+simtrace builders. Every calendar here has a cycle of 20 and works from 0 to 10
+unless a test says otherwise.
 """
 
 import contextlib
@@ -16,6 +18,17 @@ from factorysimpy.nodes.machine import Machine
 from factorysimpy.nodes.sink import Sink
 from factorysimpy.nodes.source import Source
 from factorysimpy.utils.shift_calendar import ShiftCalendar
+
+from simtrace.model import FactoryModel
+from simtrace.tools.builders import (
+    create_buffer,
+    create_machine,
+    create_shift_calendar,
+    create_sink,
+    create_source,
+)
+from simtrace.tools.simulation import build_from_spec, connect, run_simulation
+from simtrace.tools.simulation.graph import get_model
 
 _EVENT = re.compile(r"^T=(\d+\.\d+): m (breaks down|is repaired|shift starts|shift ends)$")
 
@@ -236,3 +249,107 @@ def test_source_without_calendar_has_no_off_shift_state():
     env, _, _, src = _line(None, 4, 0.1)
     _run(env, 10)
     assert "OFF_SHIFT_STATE" not in src.stats["total_time_spent_in_states"]
+
+
+# --- simtrace builders ----------------------------------------------------------
+
+
+def _simtrace_line(model, machine_calendar=None, source_calendar=None, iat=1, processing=5):
+    """src -> b_in -> m -> b_out -> snk, built with the simtrace builders."""
+    create_source("src", inter_arrival_time=iat, blocking=True,
+                  calendar=source_calendar, model=model)
+    create_buffer("b_in", capacity=100, model=model)
+    create_machine("m", processing_delay=processing, calendar=machine_calendar, model=model)
+    create_buffer("b_out", capacity=100, model=model)
+    create_sink("snk", model=model)
+    connect("b_in", "src", "m", model=model)
+    connect("b_out", "m", "snk", model=model)
+    return model
+
+
+def _quiet_run(model, until):
+    with contextlib.redirect_stdout(io.StringIO()):
+        return run_simulation(until=until, model=model)
+
+
+def test_create_shift_calendar_returns_the_joined_windows():
+    model = FactoryModel()
+    summary = create_shift_calendar("day", 20, [[0, 5], [5, 10]], model=model)
+    assert summary == {"id": "day", "type": "ShiftCalendar", "cycle": 20, "windows": [[0, 10]]}
+    assert model.spec[-1] == {
+        "op": "create_shift_calendar",
+        "kwargs": {"id": "day", "cycle": 20, "windows": [[0, 5], [5, 10]]},
+    }
+
+
+def test_duplicate_calendar_id_is_rejected():
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], model=model)
+    with pytest.raises(ValueError, match="already exists"):
+        create_shift_calendar("day", 20, [[0, 10]], model=model)
+
+
+@pytest.mark.parametrize("windows", ["0-10", [5], [[0, 25]]])
+def test_bad_windows_are_rejected_by_the_builder(windows):
+    with pytest.raises(ValueError):
+        create_shift_calendar("day", 20, windows, model=FactoryModel())
+
+
+def test_unknown_calendar_is_rejected():
+    model = FactoryModel()
+    with pytest.raises(ValueError, match="create_shift_calendar first"):
+        create_machine("m", calendar="night", model=model)
+    with pytest.raises(ValueError, match="create_shift_calendar first"):
+        create_source("src", calendar="night", model=model)
+
+
+def test_summaries_name_the_calendar():
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], model=model)
+    assert create_machine("m", calendar="day", model=model)["calendar"] == "day"
+    assert create_source("src", calendar="day", model=model)["calendar"] == "day"
+
+
+def test_machine_calendar_through_run_simulation():
+    # Same timeline as test_job_pauses_at_shift_end_and_finishes_in_the_next_window.
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], model=model)
+    _simtrace_line(model, machine_calendar="day")
+    result = _quiet_run(model, 41.5)
+    assert result["nodes"]["snk"]["num_item_received"] == 4
+    assert result["nodes"]["m"]["total_time_spent_in_states"]["OFF_SHIFT_STATE"] == 20
+
+
+def test_source_calendar_through_run_simulation():
+    # Same timeline as test_source_arrivals_count_working_time_only.
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], model=model)
+    _simtrace_line(model, source_calendar="day", iat=4, processing=0.1)
+    result = _quiet_run(model, 45)
+    assert result["nodes"]["src"]["num_item_generated"] == 6
+
+
+def test_get_model_lists_calendars_and_their_users():
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], model=model)
+    _simtrace_line(model, machine_calendar="day", source_calendar="day")
+    assert get_model(model=model)["calendars"] == [
+        {"id": "day", "cycle": 20, "windows": [[0, 10]], "used_by": ["src", "m"]}
+    ]
+
+
+def test_get_model_without_calendars_has_no_calendar_list():
+    model = _simtrace_line(FactoryModel())
+    assert "calendars" not in get_model(model=model)
+
+
+def test_rebuild_from_spec_keeps_the_calendar():
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], model=model)
+    _simtrace_line(model, machine_calendar="day")
+    rebuilt = build_from_spec(model.spec)
+    assert rebuilt.nodes["m"].calendar is rebuilt.calendars["day"]
+    assert rebuilt.calendars["day"] is not model.calendars["day"]
+    original = _quiet_run(model, 41.5)["nodes"]["snk"]["num_item_received"]
+    again = _quiet_run(rebuilt, 41.5)["nodes"]["snk"]["num_item_received"]
+    assert original == again == 4

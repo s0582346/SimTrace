@@ -11,6 +11,7 @@ them later.
   - `edges` — the passive components (Buffer, Conveyor, Fleet) that hold and
     move flow items between two nodes.
   - `part_types` — stamps a Source's part type and attributes onto its items.
+  - `calendars` — shift calendars that machines and sources follow.
 
 This package re-exports every builder so `from simtrace.tools.builders import
 create_source, ...` and `builders.create_source` work as a single surface.
@@ -19,6 +20,7 @@ See architecture/node_tools.md and architecture/edge_tools.md.
 
 from __future__ import annotations
 
+from simtrace.tools.builders.calendars import create_shift_calendar
 from simtrace.tools.builders.edges import (
     create_buffer,
     create_conveyor,
@@ -38,6 +40,7 @@ __all__ = [
     "create_conveyor",
     "create_fleet",
     "create_machine",
+    "create_shift_calendar",
     "create_sink",
     "create_source",
     "create_splitter",

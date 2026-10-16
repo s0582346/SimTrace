@@ -23,6 +23,7 @@ from simtrace.tools.builders import (
     create_conveyor,
     create_fleet,
     create_machine,
+    create_shift_calendar,
     create_sink,
     create_source,
     create_splitter,
@@ -31,6 +32,7 @@ from simtrace.tools.builders import (
 # Spec op name -> the builder that replays it. `connect` is resolved lazily in
 # build_from_spec to avoid a circular import (graph imports model, not builders).
 _BUILDERS: Dict[str, Callable[..., dict]] = {
+    "create_shift_calendar": create_shift_calendar,
     "create_source": create_source,
     "create_sink": create_sink,
     "create_machine": create_machine,
