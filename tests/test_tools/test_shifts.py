@@ -275,10 +275,13 @@ def _quiet_run(model, until):
 def test_create_shift_calendar_returns_the_joined_windows():
     model = FactoryModel()
     summary = create_shift_calendar("day", 20, [[0, 5], [5, 10]], model=model)
-    assert summary == {"id": "day", "type": "ShiftCalendar", "cycle": 20, "windows": [[0, 10]]}
+    assert summary == {
+        "id": "day", "type": "ShiftCalendar", "cycle": 20, "windows": [[0, 10]],
+        "default": False,
+    }
     assert model.spec[-1] == {
         "op": "create_shift_calendar",
-        "kwargs": {"id": "day", "cycle": 20, "windows": [[0, 5], [5, 10]]},
+        "kwargs": {"id": "day", "cycle": 20, "windows": [[0, 5], [5, 10]], "default": False},
     }
 
 
@@ -334,7 +337,8 @@ def test_get_model_lists_calendars_and_their_users():
     create_shift_calendar("day", 20, [[0, 10]], model=model)
     _simtrace_line(model, machine_calendar="day", source_calendar="day")
     assert get_model(model=model)["calendars"] == [
-        {"id": "day", "cycle": 20, "windows": [[0, 10]], "used_by": ["src", "m"]}
+        {"id": "day", "cycle": 20, "windows": [[0, 10]], "default": False,
+         "used_by": ["src", "m"]}
     ]
 
 
@@ -353,3 +357,65 @@ def test_rebuild_from_spec_keeps_the_calendar():
     original = _quiet_run(model, 41.5)["nodes"]["snk"]["num_item_received"]
     again = _quiet_run(rebuilt, 41.5)["nodes"]["snk"]["num_item_received"]
     assert original == again == 4
+
+
+# --- default calendar -----------------------------------------------------------
+
+
+def test_default_calendar_applies_to_stations_created_later():
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    _simtrace_line(model)
+    assert model.nodes["m"].calendar is model.calendars["day"]
+    assert model.nodes["src"].calendar is model.calendars["day"]
+    assert create_machine("m2", model=model)["calendar"] == "day"
+
+
+def test_default_calendar_applies_to_stations_created_earlier():
+    model = _simtrace_line(FactoryModel())
+    summary = create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    assert summary["given_to"] == ["src", "m"]
+    assert model.nodes["m"].calendar is model.calendars["day"]
+    # The sink has no calendar.
+    assert not hasattr(model.nodes["snk"], "calendar")
+
+
+def test_own_calendar_wins_over_the_default():
+    model = FactoryModel()
+    create_shift_calendar("always", 20, [[0, 20]], model=model)
+    create_machine("m_own", calendar="always", model=model)
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    create_machine("m_late", calendar="always", model=model)
+    assert model.nodes["m_own"].calendar is model.calendars["always"]
+    assert model.nodes["m_late"].calendar is model.calendars["always"]
+
+
+def test_second_default_is_rejected():
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    with pytest.raises(ValueError, match="already the default"):
+        create_shift_calendar("night", 20, [[10, 20]], default=True, model=model)
+
+
+def test_default_must_be_a_bool():
+    with pytest.raises(ValueError, match="default must be a bool"):
+        create_shift_calendar("day", 20, [[0, 10]], default="yes", model=FactoryModel())
+
+
+def test_default_calendar_through_run_simulation():
+    # Same timeline as test_machine_calendar_through_run_simulation, with the
+    # calendar created after the line.
+    model = _simtrace_line(FactoryModel())
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    result = _quiet_run(model, 41.5)
+    assert result["nodes"]["snk"]["num_item_received"] == 4
+    assert result["nodes"]["m"]["total_time_spent_in_states"]["OFF_SHIFT_STATE"] == 20
+
+
+def test_rebuild_keeps_a_default_created_after_the_line():
+    model = _simtrace_line(FactoryModel())
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    rebuilt = build_from_spec(model.spec)
+    assert rebuilt.default_calendar == "day"
+    assert rebuilt.nodes["m"].calendar is rebuilt.calendars["day"]
+    assert _quiet_run(rebuilt, 41.5)["nodes"]["snk"]["num_item_received"] == 4

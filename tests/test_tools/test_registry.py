@@ -216,3 +216,34 @@ def test_run_replications_accepts_the_python_limit():
         asyncio.run(
             mcp.call_tool("run_replications", {"until": 10, "replications": 101})
         )
+
+
+def test_register_tools_exposes_create_shift_calendar():
+    mcp = FastMCP("test")
+    register_tools(mcp)
+
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+
+    assert "create_shift_calendar" in by_name
+    schema = by_name["create_shift_calendar"].inputSchema
+    assert set(schema["required"]) == {"id", "cycle", "windows"}
+    assert "calendar" in by_name["create_machine"].inputSchema["properties"]
+    assert "calendar" in by_name["create_source"].inputSchema["properties"]
+
+
+def test_calendar_reaches_the_machine_through_the_tools():
+    from simtrace import model as model_module
+
+    mcp = FastMCP("test")
+    register_tools(mcp)
+    model_module.reset_model()
+    try:
+        asyncio.run(mcp.call_tool(
+            "create_shift_calendar", {"id": "day", "cycle": 20, "windows": [[0, 10]]}
+        ))
+        asyncio.run(mcp.call_tool("create_machine", {"id": "m", "calendar": "day"}))
+        model = model_module.get_model()
+        assert model.nodes["m"].calendar is model.calendars["day"]
+    finally:
+        model_module.reset_model()

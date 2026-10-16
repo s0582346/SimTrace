@@ -76,8 +76,8 @@ def create_source(
         attributes: needs a part_type. Attribute name -> fixed value (a
             string, number or bool), stamped unchanged on every item. The name
             "part_type" is reserved.
-        calendar: id of a shift calendar, or None for arrivals at any time.
-            With a calendar, inter_arrival_time counts working time only, so
+        calendar: id of a shift calendar. None means the model's default
+            calendar if there is one, else arrivals at any time. With a calendar, inter_arrival_time counts working time only, so
             items arrive only inside a window. The calendar starts after the
             setup.
 
@@ -118,6 +118,8 @@ def create_source(
     # Read by connect, which stamps the items on this Source's out-edges.
     node.part_type = part_type
     node.part_attributes = resolved_attributes
+    # The calendar named here; None lets a later default calendar apply.
+    node.calendar_id = calendar
 
     model.add_node(id, node)
     model.record(
@@ -147,7 +149,7 @@ def create_source(
         "node_setup_time": node_setup_time,
         "part_type": part_type,
         "attributes": attributes,
-        "calendar": calendar,
+        "calendar": calendar if calendar is not None else model.default_calendar,
         "in_edges": 0,
         "out_edges": 0,
     }
@@ -285,8 +287,9 @@ def create_machine(
         repair_time: needs time_to_failure. Time one breakdown lasts.
             Constant (>= 0) or a distribution string, e.g. "exp(30)" for an
             MTTR of 30.
-        calendar: id of a shift calendar, or None for a machine that works
-            all the time. Outside a window the machine starts no new item, and
+        calendar: id of a shift calendar. None means the model's default
+            calendar if there is one, else the machine works all the time.
+            Outside a window the machine starts no new item, and
             items being processed pause and finish their remaining time in the
             next window. With a calendar, time_to_failure and repair_time count
             working time only. The calendar starts after the setup.
@@ -340,6 +343,8 @@ def create_machine(
     node.route_by = route_by
     node.routes = resolved_routes
     node.route_shares = resolved_shares
+    # The calendar named here; None lets a later default calendar apply.
+    node.calendar_id = calendar
     if resolved_routes is not None:
         node.out_edge_selection = route_selector(node, route_by, resolved_routes)
     if resolved_shares is not None:
@@ -379,7 +384,7 @@ def create_machine(
         "route_shares": route_shares,
         "time_to_failure": time_to_failure,
         "repair_time": repair_time,
-        "calendar": calendar,
+        "calendar": calendar if calendar is not None else model.default_calendar,
         "in_edges": 0,
         "out_edges": 0,
     }

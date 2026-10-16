@@ -20,7 +20,8 @@ class FactoryModel:
         self.env = simpy.Environment()
         self.nodes: dict[str, object] = {}
         self.edges: dict[str, object] = {}
-        self.calendars: dict[str, object] = {} # Shift calendar id -> ShiftCalendar; machines and sources refer to one by id
+        self.calendars: dict[str, object] = {} # calendar id -> ShiftCalendar; machines and sources refer to one by id
+        self.default_calendar: str | None = None # id of the calendar that machines and sources without their own calendar follow
         self.events: list[dict] = [] # Item-flow events captured from the most recent run_simulation
         self.item_paths: dict[str, list[str]] = {} # Per-item trail through the plant from the most recent run. Built from `events` by telemetry.build_item_paths
         self.item_attributes: dict[str, dict] = {} # Item id -> payload stamped on it in the most recent run (part type plus its Source's attributes)

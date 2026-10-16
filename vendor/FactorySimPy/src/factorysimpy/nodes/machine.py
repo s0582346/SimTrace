@@ -558,6 +558,12 @@ class Machine(Node):
         self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
         self.update_state_rep(self.env.now)
 
+    def set_calendar(self, calendar):
+        """Give the machine a calendar. Call it before the run starts."""
+        self.calendar = calendar
+        if calendar is not None:
+            self.stats["total_time_spent_in_states"].setdefault("OFF_SHIFT_STATE", 0.0)
+
     def _wait_while_stopped(self):
         # Returns at once when the machine is up and on shift, else when both hold again.
         while self.down or self.off_shift:

@@ -32,6 +32,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         node_setup_time: float = 0,
         part_type: str | None = None,
         attributes: dict[str, str | int | float | bool] | None = None,
+        calendar: str | None = None,
     ) -> dict:
         """Create a Source node that generates flow items into the model.
 
@@ -67,6 +68,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 {"family": "B", "price": 160}. Each value is fixed: a string,
                 number or bool, the same for every item. Distributions are
                 not allowed here. The key "part_type" is reserved.
+            calendar: id of a calendar from create_shift_calendar, for
+                deliveries that only come in working hours. The
+                inter_arrival_time then counts working time only, so items
+                arrive only inside a window. None means the default
+                calendar if the model has one, else items arrive at any time.
         """
         return builders.create_source(
             id=id,
@@ -78,6 +84,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             node_setup_time=node_setup_time,
             part_type=part_type,
             attributes=attributes,
+            calendar=calendar,
         )
 
     @mcp.tool()
@@ -120,6 +127,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         route_shares: dict[str, float] | None = None,
         time_to_failure: float | str | None = None,
         repair_time: float | str | None = None,
+        calendar: str | None = None,
     ) -> dict:
         """Create a Machine node that processes flow items.
 
@@ -166,14 +174,21 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             time_to_failure: needs repair_time. Uptime from the end of the
                 setup or of a repair to the next breakdown, drawn anew each
                 time and counted even while the machine is idle or blocked.
-                Constant (> 0) or a distribution string, e.g. "exp(480)". 
+                Constant (> 0) or a distribution string, e.g. "exp(480)".
                 If the MTBF includes the repair time, use MTBF - MTTR.
+                With a calendar, only working time counts.
                 During a breakdown, items being processed pause and finish
                 their remaining time after the repair.
             repair_time: needs time_to_failure. Time one breakdown lasts.
                 Constant (>= 0) or a distribution string; for an MTTR of 30
                 use "exp(30)". run_simulation then reports num_breakdowns,
-                time_down and BREAKDOWN_STATE for this machine.
+                time_down and BREAKDOWN_STATE for this machine. With a
+                calendar, a repair only goes on in working time.
+            calendar: id of a calendar from create_shift_calendar. Outside
+                its windows the machine starts no new item, and an item
+                being processed pauses and finishes its remaining time in the
+                next window. None means the default calendar if the model
+                has one, else the machine works all the time.
         """
         return builders.create_machine(
             id=id,
@@ -188,6 +203,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             route_shares=route_shares,
             time_to_failure=time_to_failure,
             repair_time=repair_time,
+            calendar=calendar,
         )
 
     @mcp.tool()
@@ -372,6 +388,50 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    def create_shift_calendar(
+        id: str,
+        cycle: float,
+        windows: list[list[float]],
+        default: bool = False,
+    ) -> dict:
+        """Create a shift calendar: working windows that repeat every cycle.
+
+        When most stations work the same hours, create that calendar with
+        default=True: every machine and source without its own `calendar`
+        then follows it, also those created before it. Give a station
+        calendar=<id> only when its hours differ. A station that must work
+        around the clock in such a model gets its own calendar with one
+        window over the whole cycle, e.g. windows=[[0, 1440]].
+        Time 0 of the run is the
+        start of the first cycle, so with a day of 1440 minutes, time 0 is
+        midnight and 360 is 6:00. Run until a whole number of cycles to
+        cover full days or weeks, e.g. until=7200 for five days.
+
+        Example in minutes, two shifts 6:00-14:00 and 14:00-22:00 with a
+        15-minute break at 9:00 and 17:00 and a 30-minute break at 12:00 and
+        20:00, no night work:
+            cycle=1440, windows=[[360, 540], [555, 720], [750, 1020],
+                                 [1035, 1200], [1230, 1320]]
+        For Monday to Friday only, use a week, cycle=10080, and repeat the
+        day's windows shifted by 1440 for each working day.
+
+        Args:
+            id: unique calendar identifier.
+            cycle: length of one cycle in model time units (the same unit as
+                every other time in the model); must be > 0.
+            windows: working windows inside one cycle as [start, end] pairs,
+                0 <= start < end <= cycle, in ascending order and not
+                overlapping. A window includes its start and excludes its end.
+                Windows that touch are joined into one.
+            default: if True, every machine and source without its own
+                calendar follows this one. A model has at most one default.
+        """
+        return builders.create_shift_calendar(
+            id=id, cycle=cycle, windows=windows, default=default
+        )
+
+    @mcp.tool()
+    @traced
     def connect(edge_id: str, src_id: str, dest_id: str) -> dict:
         """Wire a single edge between two nodes.
 
@@ -398,7 +458,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         """Return a snapshot of the current graph.
 
         Lists every node (with its in/out edge counts) and every edge (with its
-        resolved src/dest node ids). Read-only.
+        resolved src/dest node ids). With shift calendars it also lists each
+        calendar with its windows and the stations that use it. Read-only.
         """
         return simulation.get_model()
 

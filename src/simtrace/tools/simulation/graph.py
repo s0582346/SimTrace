@@ -118,6 +118,7 @@ def get_model(*, model: FactoryModel | None = None) -> dict:
                 "id": calendar_id,
                 "cycle": calendar.cycle,
                 "windows": [list(window) for window in calendar.windows],
+                "default": calendar_id == model.default_calendar,
                 "used_by": [
                     node_id
                     for node_id, node in model.nodes.items()

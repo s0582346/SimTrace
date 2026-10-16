@@ -3,7 +3,9 @@
 `create_shift_calendar(id, cycle, windows)` registers a FactorySimPy
 `ShiftCalendar` under an id. `create_machine(calendar=<id>)` and
 `create_source(calendar=<id>)` look it up with `resolve_calendar`, so several
-stations can share one calendar.
+stations can share one calendar. A calendar created with `default=True` is
+followed by every machine and source that names no calendar of its own,
+whether it was created before or after the calendar.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ def create_shift_calendar(
     id: str,
     cycle: float,
     windows: list[list[float]],
+    default: bool = False,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -32,8 +35,11 @@ def create_shift_calendar(
             0 <= start < end <= cycle, in ascending order and not overlapping.
             A window includes its start and excludes its end. Windows that
             touch are joined into one.
+        default: if True, every machine and source without its own calendar
+            follows this one. A model has at most one default calendar.
 
-    Returns a summary dict with the joined windows.
+    Returns a summary dict with the joined windows. With default=True it also
+    lists the existing stations the calendar was given to.
     """
     model = model if model is not None else get_model()
 
@@ -46,6 +52,13 @@ def create_shift_calendar(
     for window in windows:
         if not isinstance(window, (list, tuple)):
             raise ValueError(f"each window must be a [start, end] pair (got {window!r}).")
+    if not isinstance(default, bool):
+        raise ValueError("default must be a bool.")
+    if default and model.default_calendar is not None:
+        raise ValueError(
+            f"Shift calendar '{model.default_calendar}' is already the default. "
+            "A model has at most one default calendar."
+        )
 
     calendar = ShiftCalendar(cycle, windows)
 
@@ -53,21 +66,42 @@ def create_shift_calendar(
     model.record(
         "create_shift_calendar",
         # Copy so a later mutation of the caller's lists can't rewrite history.
-        {"id": id, "cycle": cycle, "windows": [list(window) for window in windows]},
+        {
+            "id": id,
+            "cycle": cycle,
+            "windows": [list(window) for window in windows],
+            "default": default,
+        },
     )
 
-    return {
+    summary = {
         "id": id,
         "type": "ShiftCalendar",
         "cycle": cycle,
         "windows": [list(window) for window in calendar.windows],
+        "default": default,
     }
+    if default:
+        model.default_calendar = id
+        # Stations created earlier without a calendar of their own.
+        given_to = []
+        for node_id, node in model.nodes.items():
+            if hasattr(node, "set_calendar") and getattr(node, "calendar_id", None) is None:
+                node.set_calendar(calendar)
+                given_to.append(node_id)
+        summary["given_to"] = given_to
+    return summary
 
 
 def resolve_calendar(model: FactoryModel, calendar: str | None) -> object | None:
-    """Return the ShiftCalendar registered under `calendar`, or None for None."""
+    """Return the ShiftCalendar registered under `calendar`.
+
+    For None, return the model's default calendar, or None if there is none.
+    """
     if calendar is None:
-        return None
+        if model.default_calendar is None:
+            return None
+        return model.calendars[model.default_calendar]
     if not isinstance(calendar, str) or not calendar:
         raise ValueError("calendar must be the id of a shift calendar.")
     if calendar not in model.calendars:

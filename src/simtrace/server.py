@@ -48,6 +48,16 @@ Modeling patterns:
   A breakdown stops the whole machine and the item being processed finishes its
   remaining time after the repair. run_simulation reports num_breakdowns and
   time_down per machine.
+- Shifts and breaks: create_shift_calendar(id, cycle, windows) gives working
+  windows that repeat every cycle, e.g. cycle=1440 for a day in minutes with
+  time 0 at midnight. When most stations work the same hours, create it with
+  default=True: every machine and source without its own calendar follows
+  it. Pass calendar=<id> to create_machine or create_source only for a station
+  with different hours. Outside a window a machine starts no new item and a
+  running job pauses and finishes in the next window. A source with a
+  calendar releases items only inside its windows. With a calendar, time to
+  failure and repair time count working time only. Buffer delays (curing,
+  cooling) keep running outside the windows.
 - Passive waiting (curing, cooling, drying, ovens): the buffer's own delay
   with a capacity, not a machine.
 - N identical machines, one shared queue ("any free machine takes the next

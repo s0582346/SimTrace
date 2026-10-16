@@ -260,6 +260,12 @@ class Source(Node):
             )
         
     
+    def set_calendar(self, calendar):
+        """Give the source a calendar. Call it before the run starts."""
+        self.calendar = calendar
+        if calendar is not None:
+            self.stats["total_time_spent_in_states"].setdefault("OFF_SHIFT_STATE", 0.0)
+
     def _wait_working_time(self, delay):
         # Waits until `delay` units of working time have passed. Time outside the windows
         # counts as OFF_SHIFT_STATE.
