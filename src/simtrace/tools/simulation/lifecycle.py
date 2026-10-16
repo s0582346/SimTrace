@@ -75,7 +75,8 @@ def run_simulation(
     the generated, completed and scrapped item counts and, over the completed
     items, the sum of every numeric attribute. Items that end at a Sink with
     scrap=True count as scrapped. A machine with time_to_failure also reports
-    num_breakdowns, time_down and BREAKDOWN_STATE.
+    num_breakdowns, time_down and BREAKDOWN_STATE. A machine or source with a
+    calendar also reports time_off_shift, its time outside the windows.
     """
     model = model if model is not None else get_session_model()
 
@@ -98,11 +99,13 @@ def run_simulation(
     model.item_attributes.clear()
     with traced_stdout(collector=model.events):
         model.env.run(until=until)
-    # A machine still broken down at `until` adds its downtime so far.
+    # A machine still broken down at `until` adds its downtime so far, and a
+    # station with a calendar counts its time outside the windows.
     for node in model.nodes.values():
-        settle = getattr(node, "settle_breakdown", None)
-        if settle is not None:
-            settle(model.env.now)
+        for name in ("settle_breakdown", "settle_off_shift"):
+            settle = getattr(node, name, None)
+            if settle is not None:
+                settle(model.env.now)
     model.item_paths.update(build_item_paths(model.events, model.edges.keys()))
 
     nodes = {

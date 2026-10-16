@@ -79,6 +79,7 @@ class Machine(Node):
                                         Time that is both off shift and broken down counts as OFF_SHIFT_STATE.
             num_breakdowns           : Number of breakdowns started (only with time_to_failure).
             time_down                 : Total time spent broken down (only with time_to_failure). With a calendar, only working time counts.
+            time_off_shift            : Time outside the calendar's windows from the end of the setup to the end of the run (only with a calendar).
 
     """
 
@@ -133,6 +134,7 @@ class Machine(Node):
         self.shift_started = None  # event that fires when the next window starts
         if calendar is not None:
             self.stats["total_time_spent_in_states"]["OFF_SHIFT_STATE"] = 0.0
+            self.stats["time_off_shift"] = 0.0
 
 
         
@@ -563,6 +565,18 @@ class Machine(Node):
         self.calendar = calendar
         if calendar is not None:
             self.stats["total_time_spent_in_states"].setdefault("OFF_SHIFT_STATE", 0.0)
+            self.stats.setdefault("time_off_shift", 0.0)
+
+    def settle_off_shift(self, current_time):
+        """Set `time_off_shift` to the time outside the windows from the end of the setup to `current_time`.
+
+        Called when a run stops.
+        """
+        if self.calendar is None:
+            return
+        start = min(self.node_setup_time, current_time)
+        working = self.calendar.working_time_between(start, current_time)
+        self.stats["time_off_shift"] = current_time - start - working
 
     def _wait_while_stopped(self):
         # Returns at once when the machine is up and on shift, else when both hold again.

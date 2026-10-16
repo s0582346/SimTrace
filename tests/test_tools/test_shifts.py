@@ -29,6 +29,7 @@ from simtrace.tools.builders import (
 )
 from simtrace.tools.simulation import build_from_spec, connect, run_simulation
 from simtrace.tools.simulation.graph import get_model
+from simtrace.tools.telemetry import _classify
 
 _EVENT = re.compile(r"^T=(\d+\.\d+): m (breaks down|is repaired|shift starts|shift ends)$")
 
@@ -419,3 +420,59 @@ def test_rebuild_keeps_a_default_created_after_the_line():
     assert rebuilt.default_calendar == "day"
     assert rebuilt.nodes["m"].calendar is rebuilt.calendars["day"]
     assert _quiet_run(rebuilt, 41.5)["nodes"]["snk"]["num_item_received"] == 4
+
+
+# --- report and telemetry -------------------------------------------------------
+
+
+
+def test_time_off_shift_counts_the_stretch_still_running_at_the_end():
+    # Off 10-20 and 30-35 at until=35.
+    model = _simtrace_line(FactoryModel())
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    nodes = _quiet_run(model, 35)["nodes"]
+    assert nodes["m"]["time_off_shift"] == 15
+    assert nodes["src"]["time_off_shift"] == 15
+
+
+def test_time_off_shift_starts_after_the_setup():
+    # Setup 0-12, then off 12-20 and 30-35.
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    create_source("src", inter_arrival_time=1, blocking=True, model=model)
+    create_buffer("b_in", capacity=100, model=model)
+    create_machine("m", processing_delay=5, node_setup_time=12, model=model)
+    create_buffer("b_out", capacity=100, model=model)
+    create_sink("snk", model=model)
+    connect("b_in", "src", "m", model=model)
+    connect("b_out", "m", "snk", model=model)
+    assert _quiet_run(model, 35)["nodes"]["m"]["time_off_shift"] == 13
+
+
+def test_station_without_calendar_reports_no_time_off_shift():
+    nodes = _quiet_run(_simtrace_line(FactoryModel()), 10)["nodes"]
+    assert "time_off_shift" not in nodes["m"]
+    assert "time_off_shift" not in nodes["src"]
+
+
+def test_shift_lines_are_telemetry_events():
+    assert _classify("m shift ends") == ("shift_end", {"sim.node": "m"})
+    assert _classify("src shift starts") == ("shift_start", {"sim.node": "src"})
+
+
+def test_shift_events_come_at_the_window_edges_even_for_a_blocked_source():
+    # The source fills a buffer of 1 behind a machine that is off from 10 to 20,
+    # so the source is blocked at 10 and still reports the shift end at 10.
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    create_source("src", inter_arrival_time=1, blocking=True, model=model)
+    create_buffer("b_in", capacity=1, model=model)
+    create_machine("m", processing_delay=5, model=model)
+    create_buffer("b_out", capacity=100, model=model)
+    create_sink("snk", model=model)
+    connect("b_in", "src", "m", model=model)
+    connect("b_out", "m", "snk", model=model)
+    _quiet_run(model, 25)
+    src_events = [(e["time"], e["kind"]) for e in model.events
+                  if e.get("node") == "src" and e["kind"].startswith("shift")]
+    assert src_events == [(10.0, "shift_end"), (20.0, "shift_start")]

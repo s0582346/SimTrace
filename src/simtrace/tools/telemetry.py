@@ -118,6 +118,8 @@ _EVENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("blocked", re.compile(r"^(?P<node>\S+) (?:worker )?is in BLOCKED_STATE")),
     ("breakdown", re.compile(r"^(?P<node>\S+) breaks down$")),
     ("repaired", re.compile(r"^(?P<node>\S+) is repaired$")),
+    ("shift_end", re.compile(r"^(?P<node>\S+) shift ends$")),
+    ("shift_start", re.compile(r"^(?P<node>\S+) shift starts$")),
     ("state", re.compile(r"^(?P<node>\S+) is in (?P<state>[A-Z][A-Z_]*_STATE)")),
     ("state", re.compile(r"^(?P<node>\S+) is now (?P<state>\S+)")),
     ("state", re.compile(r"^(?P<node>\S+) completed (?P<state>setup)")),

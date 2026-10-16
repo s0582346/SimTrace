@@ -57,7 +57,8 @@ Modeling patterns:
   running job pauses and finishes in the next window. A source with a
   calendar releases items only inside its windows. With a calendar, time to
   failure and repair time count working time only. Buffer delays (curing,
-  cooling) keep running outside the windows.
+  cooling) keep running outside the windows. run_simulation reports
+  time_off_shift per station with a calendar.
 - Passive waiting (curing, cooling, drying, ovens): the buffer's own delay
   with a capacity, not a machine.
 - N identical machines, one shared queue ("any free machine takes the next

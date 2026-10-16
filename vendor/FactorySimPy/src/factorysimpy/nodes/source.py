@@ -81,6 +81,7 @@ class Source(Node):
         num_item_generated        : Total number of items generated.
         num_item_discarded        : Total number of items discarded due to lack of space in out edge.
         total_time_spent_in_states: Dictionary with total time spent in each state. With a calendar it holds OFF_SHIFT_STATE.
+        time_off_shift            : Time outside the calendar's windows from the end of the setup to the end of the run (only with a calendar).
 
       
 
@@ -103,6 +104,7 @@ class Source(Node):
         self.calendar = calendar
         if calendar is not None:
             self.stats["total_time_spent_in_states"]["OFF_SHIFT_STATE"] = 0.0
+            self.stats["time_off_shift"] = 0.0
         
 
         
@@ -265,6 +267,32 @@ class Source(Node):
         self.calendar = calendar
         if calendar is not None:
             self.stats["total_time_spent_in_states"].setdefault("OFF_SHIFT_STATE", 0.0)
+            self.stats.setdefault("time_off_shift", 0.0)
+
+    def settle_off_shift(self, current_time):
+        """Set `time_off_shift` to the time outside the windows from the end of the setup to `current_time`.
+
+        Called when a run stops.
+        """
+        if self.calendar is None:
+            return
+        start = min(self.node_setup_time, current_time)
+        working = self.calendar.working_time_between(start, current_time)
+        self.stats["time_off_shift"] = current_time - start - working
+
+    def _shift_messages(self):
+        # Prints the end and the start of each window.
+        if not self.calendar.is_working(self.env.now):
+            print(f"T={self.env.now:.2f}: {self.id} shift ends")
+        while True:
+            change = self.calendar.next_change(self.env.now)
+            if change is None:
+                return
+            yield self.env.timeout(change - self.env.now)
+            if self.calendar.is_working(self.env.now):
+                print(f"T={self.env.now:.2f}: {self.id} shift starts")
+            else:
+                print(f"T={self.env.now:.2f}: {self.id} shift ends")
 
     def _wait_working_time(self, delay):
         # Waits until `delay` units of working time have passed. Time outside the windows
@@ -273,10 +301,8 @@ class Source(Node):
         while True:
             if not self.calendar.is_working(self.env.now):
                 self.update_state("OFF_SHIFT_STATE", self.env.now)
-                print(f"T={self.env.now:.2f}: {self.id} shift ends")
                 yield self.env.timeout(self.calendar.next_change(self.env.now) - self.env.now)
                 self.update_state("GENERATING_STATE", self.env.now)
-                print(f"T={self.env.now:.2f}: {self.id} shift starts")
             end = self.calendar.next_change(self.env.now)
             if end is None or remaining <= end - self.env.now:
                 yield self.env.timeout(remaining)
@@ -305,9 +331,12 @@ class Source(Node):
                 yield self.env.timeout(self.node_setup_time)
                 
                 self.update_state("GENERATING_STATE", self.env.now)
-     
-                
+
+
                 print(f"T={self.env.now:.2f}: {self.id} is now {self.state}")
+                # The calendar starts after the setup.
+                if self.calendar is not None:
+                    self.env.process(self._shift_messages())
             
             elif self.state== "GENERATING_STATE":
                 next_arrival_time = self.get_delay(self.inter_arrival_time)
