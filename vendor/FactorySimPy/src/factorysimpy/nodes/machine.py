@@ -49,6 +49,10 @@ class Machine(Node):
                 - callable: A function that gets the item and returns an edge index.
             time_to_failure (None, int, float, Generator, Callable): Time from the end of one repair (or of the setup) to the next breakdown, on the simulation clock. None means the machine never breaks down.
             repair_time (None, int, float, Generator, Callable): Time a breakdown lasts. Needed with time_to_failure.
+            calendar (None or ShiftCalendar): Working windows of the machine. None means the machine works all the time.
+                Outside a window the machine starts no new item, and items being processed pause and finish their
+                remaining time in the next window. With a calendar, time_to_failure and repair_time count working time only.
+                The calendar starts after the setup.
 
 
         Behavior:
@@ -71,13 +75,14 @@ class Machine(Node):
             last_state_change_time    : Time when the state was last changed.
             num_item_processed        : Total number of items generated.
             num_item_discarded        : Total number of items discarded.
-            total_time_spent_in_states: Dictionary with total time spent in each state.
-            num_breakdowns            : Number of breakdowns started (only with time_to_failure).
-            time_down                 : Total time spent broken down (only with time_to_failure).
+            total_time_spent_in_states: Dictionary with total time spent in each state. With a calendar it holds OFF_SHIFT_STATE.
+                                        Time that is both off shift and broken down counts as OFF_SHIFT_STATE.
+            num_breakdowns           : Number of breakdowns started (only with time_to_failure).
+            time_down                 : Total time spent broken down (only with time_to_failure). With a calendar, only working time counts.
 
     """
 
-    def __init__(self, env, id, in_edges=None, out_edges=None,node_setup_time=0, work_capacity=1,processing_delay=0,blocking=True,in_edge_selection="FIRST_AVAILABLE",out_edge_selection="FIRST_AVAILABLE",time_to_failure=None,repair_time=None):
+    def __init__(self, env, id, in_edges=None, out_edges=None,node_setup_time=0, work_capacity=1,processing_delay=0,blocking=True,in_edge_selection="FIRST_AVAILABLE",out_edge_selection="FIRST_AVAILABLE",time_to_failure=None,repair_time=None,calendar=None):
         super().__init__(env, id,in_edges, out_edges, node_setup_time)
         
         
@@ -122,6 +127,13 @@ class Machine(Node):
             self.stats["num_breakdowns"] = 0
             self.stats["time_down"] = 0.0
 
+        # Shifts: outside the calendar's windows the machine is off.
+        self.calendar = calendar
+        self.off_shift = False  # True outside a working window
+        self.shift_started = None  # event that fires when the next window starts
+        if calendar is not None:
+            self.stats["total_time_spent_in_states"]["OFF_SHIFT_STATE"] = 0.0
+
 
         
 
@@ -155,8 +167,10 @@ class Machine(Node):
         
         if self.state_rep is not None and self.stats["last_state_change_time"] is not None:
             elapsed = current_time - self.stats["last_state_change_time"]
-            # broken down: the time counts for no other state
-            if self.down:
+            # off shift or broken down: the time counts for no other state
+            if self.off_shift:
+                self.stats["total_time_spent_in_states"]["OFF_SHIFT_STATE"] += elapsed
+            elif self.down:
                 self.stats["total_time_spent_in_states"]["BREAKDOWN_STATE"] += elapsed
             else:
                 # all idle
@@ -544,35 +558,71 @@ class Machine(Node):
         self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
         self.update_state_rep(self.env.now)
 
-    def _wait_while_down(self):
-        # Returns at once when the machine is up, else after the repair.
-        while self.down:
-            yield self.repaired
+    def _wait_while_stopped(self):
+        # Returns at once when the machine is up and on shift, else when both hold again.
+        while self.down or self.off_shift:
+            yield self.repaired if self.down else self.shift_started
+
+    def _pause_workers(self):
+        # Stop the items being processed; blocked items may still leave.
+        # The flag is cleared here so that a second stop at the same time does not interrupt twice.
+        for proc in self.worker_thread_list:
+            if getattr(proc, "in_processing", False):
+                proc.in_processing = False
+                proc.interrupt()
+
+    def _working_delay(self, delay):
+        # With a calendar, `delay` counts working time only.
+        if self.calendar is None:
+            return delay
+        return self.calendar.add_working_time(self.env.now, delay) - self.env.now
 
     def settle_breakdown(self, current_time):
         """Add the downtime up to `current_time` to `time_down`.
 
         Called at the end of each repair and when a run stops during a breakdown.
+        With a calendar, only working time counts.
         """
         if self.down:
-            self.stats["time_down"] += current_time - self.down_since
+            if self.calendar is None:
+                elapsed = current_time - self.down_since
+            else:
+                elapsed = self.calendar.working_time_between(self.down_since, current_time)
+            self.stats["time_down"] += elapsed
             self.down_since = current_time
+
+    def _shifts(self):
+        # Switches the machine off at the end of each working window and on at the start of the next.
+        while True:
+            if self.calendar.is_working(self.env.now):
+                if self.off_shift:
+                    self.update_state_rep(self.env.now)
+                    self.off_shift = False
+                    print(f"T={self.env.now:.2f}: {self.id} shift starts")
+                    self.shift_started.succeed()
+            elif not self.off_shift:
+                self.update_state_rep(self.env.now)
+                self.off_shift = True
+                self.shift_started = self.env.event()
+                print(f"T={self.env.now:.2f}: {self.id} shift ends")
+                self._pause_workers()
+            change = self.calendar.next_change(self.env.now)
+            if change is None:
+                return
+            yield self.env.timeout(change - self.env.now)
 
     def _breakdowns(self):
         # One breakdown at a time: the next time to failure starts after the repair.
         while True:
-            yield self.env.timeout(self.get_delay(self.time_to_failure))
+            yield self.env.timeout(self._working_delay(self.get_delay(self.time_to_failure)))
             self.update_state_rep(self.env.now)
             self.down = True
             self.down_since = self.env.now
             self.repaired = self.env.event()
             self.stats["num_breakdowns"] += 1
             print(f"T={self.env.now:.2f}: {self.id} breaks down")
-            # Stop the items being processed; blocked items may still leave.
-            for proc in self.worker_thread_list:
-                if getattr(proc, "in_processing", False):
-                    proc.interrupt()
-            yield self.env.timeout(self.get_delay(self.repair_time))
+            self._pause_workers()
+            yield self.env.timeout(self._working_delay(self.get_delay(self.repair_time)))
             self.settle_breakdown(self.env.now)
             self.update_state_rep(self.env.now)
             self.down = False
@@ -586,14 +636,15 @@ class Machine(Node):
             self.update_state_rep(self.env.now)
             processing_start_time = self.env.now
             #wait for processing_delay amount of time
-            # A breakdown stops the timeout; the remaining time runs after the repair.
+            # A breakdown or the end of a shift stops the timeout; the remaining time runs
+            # after the repair or in the next shift.
             this_worker = self.env.active_process
             remaining = processing_delay
-            time_down = 0.0
+            time_stopped = 0.0
             while True:
-                down_start = self.env.now
-                yield from self._wait_while_down()
-                time_down += self.env.now - down_start
+                stop_start = self.env.now
+                yield from self._wait_while_stopped()
+                time_stopped += self.env.now - stop_start
                 run_start = self.env.now
                 this_worker.in_processing = True
                 try:
@@ -604,7 +655,7 @@ class Machine(Node):
                 finally:
                     this_worker.in_processing = False
             #self.stats["num_item_processed"] += 1
-            self._update_avg_time_spent_in_processing(self.env.now - processing_start_time - time_down)  # Update the average time spent in processing
+            self._update_avg_time_spent_in_processing(self.env.now - processing_start_time - time_stopped)  # Update the average time spent in processing
           
                #out_edge_selection is "FIRST_AVAILABLE"---> 
             if self.out_edge_selection == "FIRST_AVAILABLE":
@@ -778,7 +829,9 @@ class Machine(Node):
                 print(f"T={self.env.now:.2f}: {self.id} completed setup")
                 self.update_state_rep(self.env.now)
                 #self.update_state("IDLE_STATE", self.env.now)
-                # The time to the first breakdown starts after the setup.
+                # The calendar and the time to the first breakdown start after the setup.
+                if self.calendar is not None:
+                    self.env.process(self._shifts())
                 if self.time_to_failure is not None:
                     self.env.process(self._breakdowns())
 
@@ -865,8 +918,8 @@ class Machine(Node):
                             
                         #self.in_edge_events=[]
 
-                    # The item stays reserved in the in_edge until the repair ends.
-                    yield from self._wait_while_down()
+                    # The item stays reserved in the in_edge until the repair ends and the shift runs.
+                    yield from self._wait_while_stopped()
 
 
                     ####---3/9 Create workers based on work_capacity
@@ -912,8 +965,8 @@ class Machine(Node):
                         get_token = outstore.reserve_get()
                         yield get_token
                         print(f"T={self.env.now:.2f}: {self.id} yielded from {in_edge_to_get.id} ")
-                        # The item stays reserved in the in_edge until the repair ends.
-                        yield from self._wait_while_down()
+                        # The item stays reserved in the in_edge until the repair ends and the shift runs.
+                        yield from self._wait_while_stopped()
                          # Create workers based on work_capacity
                         #worker_thread_req = self.worker_thread.request()  # Request a worker thread
                         #yield worker_thread_req
