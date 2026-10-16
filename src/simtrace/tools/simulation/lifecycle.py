@@ -99,10 +99,11 @@ def run_simulation(
     model.item_attributes.clear()
     with traced_stdout(collector=model.events):
         model.env.run(until=until)
-    # A machine still broken down at `until` adds its downtime so far, and a
-    # station with a calendar counts its time outside the windows.
+    # Every node adds the time since its last state change to its current
+    # state, a machine still broken down at `until` adds its downtime so far,
+    # and a station with a calendar counts its time outside the windows.
     for node in model.nodes.values():
-        for name in ("settle_breakdown", "settle_off_shift"):
+        for name in ("settle_states", "settle_breakdown", "settle_off_shift"):
             settle = getattr(node, name, None)
             if settle is not None:
                 settle(model.env.now)

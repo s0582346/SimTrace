@@ -125,9 +125,9 @@ def test_job_finishes_its_remaining_time_after_the_repair(model):
     assert stats["num_breakdowns"] == 3
     assert stats["time_down"] == 6
     states = stats["total_time_spent_in_states"]
-    # Up to the last state change at 18: 1 idle, 11 processing, 6 down.
+    # Up to the end at 20: 1 idle, 13 processing, 6 down.
     assert states["BREAKDOWN_STATE"] == 6
-    assert states["ATLEAST_ONE_PROCESSING_STATE"] == 11
+    assert states["ATLEAST_ONE_PROCESSING_STATE"] == 13
     assert states["IDLE_STATE"] == 1
 
 

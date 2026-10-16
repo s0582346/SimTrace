@@ -185,6 +185,19 @@ class Combiner(Node):
         else:
             raise ValueError(f"Edge already exists in Combiner '{self.id}' in_edges.")
         
+    def settle_states(self, current_time):
+        """Add the time since the last state change to the current state and move the change to `current_time`.
+
+        Called when a run stops. Calling it again at the same time adds nothing.
+        """
+        last = self.stats["last_state_change_time"]
+        if self.state is None or last is None:
+            return
+        self.stats["total_time_spent_in_states"][self.state] = (
+            self.stats["total_time_spent_in_states"].get(self.state, 0.0) + current_time - last
+        )
+        self.stats["last_state_change_time"] = current_time
+
     def update_final_state_time(self, simulation_end_time):
         duration = simulation_end_time- self.stats["last_state_change_time"]
         # updating the time of per thread states

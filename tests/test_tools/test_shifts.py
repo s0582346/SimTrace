@@ -476,3 +476,31 @@ def test_shift_events_come_at_the_window_edges_even_for_a_blocked_source():
     src_events = [(e["time"], e["kind"]) for e in model.events
                   if e.get("node") == "src" and e["kind"].startswith("shift")]
     assert src_events == [(10.0, "shift_end"), (20.0, "shift_start")]
+
+
+# --- state times at the end of a run --------------------------------------------
+
+
+def test_state_times_add_up_to_the_run_length():
+    # The machine is off from 30 to 35 when the run stops; that stretch counts.
+    model = _simtrace_line(FactoryModel())
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    nodes = _quiet_run(model, 35)["nodes"]
+    m_states = nodes["m"]["total_time_spent_in_states"]
+    assert m_states["OFF_SHIFT_STATE"] == 15
+    assert (m_states["IDLE_STATE"] + m_states["ATLEAST_ONE_PROCESSING_STATE"]
+            + m_states["OFF_SHIFT_STATE"]) == pytest.approx(35)
+    assert sum(nodes["src"]["total_time_spent_in_states"].values()) == pytest.approx(35)
+    assert sum(nodes["snk"]["total_time_spent_in_states"].values()) == pytest.approx(35)
+
+
+def test_settle_states_twice_adds_nothing():
+    env, m, snk, src = _line(None, 1, 5)
+    _run(env, 12)
+    for node in (m, snk, src):
+        node.settle_states(env.now)
+    before = [dict(node.stats["total_time_spent_in_states"]) for node in (m, snk, src)]
+    for node in (m, snk, src):
+        node.settle_states(env.now)
+    after = [dict(node.stats["total_time_spent_in_states"]) for node in (m, snk, src)]
+    assert before == after

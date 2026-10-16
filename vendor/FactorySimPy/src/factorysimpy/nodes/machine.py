@@ -297,6 +297,16 @@ class Machine(Node):
         else:
             raise ValueError(f"Edge already exists in Machine '{self.id}' in_edges.")
         
+    def settle_states(self, current_time):
+        """Add the time since the last state change to the current state and move the change to `current_time`.
+
+        Called when a run stops. Calling it again at the same time adds nothing. During the
+        setup it does nothing; the setup is counted when it ends.
+        """
+        if self.state_rep == (-1, -1) or self.stats["last_state_change_time"] is None:
+            return
+        self.update_state_rep(current_time)
+
     def update_final_state_time(self, simulation_end_time):
         duration = simulation_end_time- self.stats["last_state_change_time"]
         # updating the time of per thread statescld
