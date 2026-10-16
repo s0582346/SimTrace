@@ -20,10 +20,11 @@ from factorysimpy.utils.shift_calendar import ShiftCalendar
 _EVENT = re.compile(r"^T=(\d+\.\d+): m (breaks down|is repaired|shift starts|shift ends)$")
 
 
-def _line(calendar, iat, processing, time_to_failure=None, repair_time=None):
+def _line(calendar, iat, processing, time_to_failure=None, repair_time=None,
+          source_calendar=None):
     """src -> b_in -> m -> b_out -> snk."""
     env = simpy.Environment()
-    src = Source(env, "src", inter_arrival_time=iat, blocking=True)
+    src = Source(env, "src", inter_arrival_time=iat, blocking=True, calendar=source_calendar)
     b_in = Buffer(env, "b_in", capacity=100)
     m = Machine(env, "m", processing_delay=processing, time_to_failure=time_to_failure,
                 repair_time=repair_time, calendar=calendar)
@@ -31,7 +32,7 @@ def _line(calendar, iat, processing, time_to_failure=None, repair_time=None):
     snk = Sink(env, "snk")
     b_in.connect(src, m)
     b_out.connect(m, snk)
-    return env, m, snk
+    return env, m, snk, src
 
 
 def _run(env, until):
@@ -48,7 +49,7 @@ def _run(env, until):
 
 
 def _received_by(calendar, iat, processing, until):
-    env, _, snk = _line(calendar, iat, processing)
+    env, _, snk, _ = _line(calendar, iat, processing)
     _run(env, until)
     return snk.stats["num_item_received"]
 
@@ -155,7 +156,7 @@ def test_no_new_job_starts_outside_a_window():
 def test_calendar_that_starts_off():
     # Works 5-10. The item from t=1 waits until 5 and leaves at 7, the next at 9.
     cal = ShiftCalendar(20, [[5, 10]])
-    env, _, snk = _line(cal, 1, 2)
+    env, _, snk, _ = _line(cal, 1, 2)
     events = _run(env, 8)
     assert events == [(0.0, "shift ends"), (5.0, "shift starts")]
     assert snk.stats["num_item_received"] == 1
@@ -163,7 +164,7 @@ def test_calendar_that_starts_off():
 
 def test_off_shift_time_is_its_own_state():
     cal = ShiftCalendar(20, [[0, 10]])
-    env, m, _ = _line(cal, 1, 5)
+    env, m, _, _ = _line(cal, 1, 5)
     _run(env, 40)
     m.update_final_state_time(env.now)
     states = m.stats["total_time_spent_in_states"]
@@ -172,7 +173,7 @@ def test_off_shift_time_is_its_own_state():
 
 
 def test_machine_without_calendar_has_no_off_shift_state():
-    env, m, _ = _line(None, 1, 5)
+    env, m, _, _ = _line(None, 1, 5)
     _run(env, 10)
     assert "OFF_SHIFT_STATE" not in m.stats["total_time_spent_in_states"]
 
@@ -183,7 +184,7 @@ def test_breakdowns_count_working_time_only():
     #   next failure after 8 more working units: 22-30, so at 30, as the shift ends
     #   repairs 40-44
     cal = ShiftCalendar(20, [[0, 10]])
-    env, m, _ = _line(cal, 100, 1, time_to_failure=8, repair_time=4)
+    env, m, _, _ = _line(cal, 100, 1, time_to_failure=8, repair_time=4)
     events = _run(env, 45)
     breakdowns = [t for t, kind in events if kind == "breaks down"]
     repairs = [t for t, kind in events if kind == "is repaired"]
@@ -196,7 +197,42 @@ def test_breakdowns_count_working_time_only():
 def test_breakdown_and_shift_end_at_the_same_time_while_busy():
     # Same timeline as above, but the machine is busy at 30 when both stops come.
     cal = ShiftCalendar(20, [[0, 10]])
-    env, m, snk = _line(cal, 1, 5, time_to_failure=8, repair_time=4)
+    env, m, snk, _ = _line(cal, 1, 5, time_to_failure=8, repair_time=4)
     events = _run(env, 60)
     assert [t for t, kind in events if kind == "breaks down"] == [8, 30]
     assert snk.stats["num_item_received"] > 0
+
+
+# --- Source with a calendar -----------------------------------------------------
+
+
+def _generated_by(iat, until):
+    cal = ShiftCalendar(20, [[0, 10]])
+    env, _, _, src = _line(None, iat, 0.1, source_calendar=cal)
+    _run(env, until)
+    return src.stats["num_item_generated"]
+
+
+def test_source_arrivals_count_working_time_only():
+    # One item every 4 units of working time:
+    #   4, 8, then 8-10 and 20-22 -> 22, 26, 30 (at the window end), then 40-44 -> 44
+    assert _generated_by(4, 21) == 2
+    assert _generated_by(4, 23) == 3
+    assert _generated_by(4, 29) == 4
+    assert _generated_by(4, 31) == 5
+    assert _generated_by(4, 43) == 5
+    assert _generated_by(4, 45) == 6
+
+
+def test_source_off_shift_time_is_its_own_state():
+    cal = ShiftCalendar(20, [[0, 10]])
+    env, _, _, src = _line(None, 4, 0.1, source_calendar=cal)
+    _run(env, 40)
+    src.update_final_state_time(env.now)
+    assert src.stats["total_time_spent_in_states"]["OFF_SHIFT_STATE"] == 20
+
+
+def test_source_without_calendar_has_no_off_shift_state():
+    env, _, _, src = _line(None, 4, 0.1)
+    _run(env, 10)
+    assert "OFF_SHIFT_STATE" not in src.stats["total_time_spent_in_states"]

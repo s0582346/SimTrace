@@ -40,8 +40,12 @@ class Source(Node):
                 - "ROUND_ROBIN": Selects out edges in a round-robin manner.
                 - "FIRST_AVAILABLE": Selects the first out edge that can accept an item.
             - callable: A function that returns an edge index.
+        calendar (None or ShiftCalendar): Working windows of the source. None means items arrive at any time.
+            With a calendar, `inter_arrival_time` counts working time only, so items arrive only inside a window.
+            An item can arrive exactly at the end of a window. An item that is waiting for space in the out edge
+            is still put into it outside a window. The calendar starts after the setup.
 
-    
+
     Behavior:
             
     The Source node is responsible for generating items that flow in the simulation model. It operates in two modes: 
@@ -76,13 +80,13 @@ class Source(Node):
         last_state_change_time    : Time when the state was last changed.
         num_item_generated        : Total number of items generated.
         num_item_discarded        : Total number of items discarded due to lack of space in out edge.
-        total_time_spent_in_states: Dictionary with total time spent in each state.
-       
+        total_time_spent_in_states: Dictionary with total time spent in each state. With a calendar it holds OFF_SHIFT_STATE.
+
       
 
     """
 
-    def __init__(self, env, id, in_edges=None, out_edges=None, item_length=1, flow_item_type = "item", inter_arrival_time=0, blocking=False, out_edge_selection="FIRST_AVAILABLE" ):
+    def __init__(self, env, id, in_edges=None, out_edges=None, item_length=1, flow_item_type = "item", inter_arrival_time=0, blocking=False, out_edge_selection="FIRST_AVAILABLE", calendar=None ):
         super().__init__( env, id,in_edges , out_edges )
         
         self.state = "SETUP_STATE" # Initial state of the source node
@@ -96,6 +100,9 @@ class Source(Node):
             "num_item_discarded": 0,
             "total_time_spent_in_states":{"SETUP_STATE": 0.0, "GENERATING_STATE": 0.0, "BLOCKED_STATE": 0.0}
         }
+        self.calendar = calendar
+        if calendar is not None:
+            self.stats["total_time_spent_in_states"]["OFF_SHIFT_STATE"] = 0.0
         
 
         
@@ -253,8 +260,26 @@ class Source(Node):
             )
         
     
+    def _wait_working_time(self, delay):
+        # Waits until `delay` units of working time have passed. Time outside the windows
+        # counts as OFF_SHIFT_STATE.
+        remaining = delay
+        while True:
+            if not self.calendar.is_working(self.env.now):
+                self.update_state("OFF_SHIFT_STATE", self.env.now)
+                print(f"T={self.env.now:.2f}: {self.id} shift ends")
+                yield self.env.timeout(self.calendar.next_change(self.env.now) - self.env.now)
+                self.update_state("GENERATING_STATE", self.env.now)
+                print(f"T={self.env.now:.2f}: {self.id} shift starts")
+            end = self.calendar.next_change(self.env.now)
+            if end is None or remaining <= end - self.env.now:
+                yield self.env.timeout(remaining)
+                return
+            remaining -= end - self.env.now
+            yield self.env.timeout(end - self.env.now)
+
     def behaviour(self):
-        
+
         #Simulates the source behavior, generating items at random intervals and placing them in out_edge.
         #if blocking is True, it will block until it can put an item into the out_edge.
         #If blocking is False, it will discard the item if no space is available in the out_edge.
@@ -282,7 +307,10 @@ class Source(Node):
                 next_arrival_time = self.get_delay(self.inter_arrival_time)
                 if not isinstance(next_arrival_time, (int, float)):
                     raise AssertionError("inter_arrival_time returns an invalid value. It should be int or float")
-                yield self.env.timeout(next_arrival_time)
+                if self.calendar is None:
+                    yield self.env.timeout(next_arrival_time)
+                else:
+                    yield from self._wait_working_time(next_arrival_time)
                 i+=1
                 if self.flow_item_type == "item":
                     item = Item(f'item_{self.id+"_"+str(i)}')
