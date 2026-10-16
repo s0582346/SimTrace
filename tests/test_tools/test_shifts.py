@@ -29,6 +29,7 @@ from simtrace.tools.builders import (
 )
 from simtrace.tools.simulation import build_from_spec, connect, run_simulation
 from simtrace.tools.simulation.graph import get_model
+from simtrace.tools.simulation.replications import run_replications
 from simtrace.tools.telemetry import _classify
 
 _EVENT = re.compile(r"^T=(\d+\.\d+): m (breaks down|is repaired|shift starts|shift ends)$")
@@ -504,3 +505,36 @@ def test_settle_states_twice_adds_nothing():
         node.settle_states(env.now)
     after = [dict(node.stats["total_time_spent_in_states"]) for node in (m, snk, src)]
     assert before == after
+
+
+# --- replications ---------------------------------------------------------------
+
+
+def _replication_metrics(out):
+    return out["analysis"]["_individual_replications"]
+
+
+def test_replications_rebuild_the_calendar_for_every_run():
+    # Same timeline as test_default_calendar_through_run_simulation in each run.
+    model = _simtrace_line(FactoryModel())
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    with contextlib.redirect_stdout(io.StringIO()):
+        out = run_replications(until=41.5, replications=3, model=model)
+    for rep in _replication_metrics(out):
+        assert rep["snk.num_item_received"] == 4
+        assert rep["m.time_off_shift"] == 20
+    assert out["analysis"]["m.time_off_shift"]["mean"] == 20
+
+
+def test_time_off_shift_is_the_same_in_every_stochastic_run():
+    # The arrivals and the processing are random; the calendar is not.
+    model = FactoryModel()
+    create_shift_calendar("day", 20, [[0, 10]], default=True, model=model)
+    _simtrace_line(model, iat="exp(2)", processing="uniform(1, 3)")
+    with contextlib.redirect_stdout(io.StringIO()):
+        out = run_replications(until=95, replications=4, model=model)
+    reps = _replication_metrics(out)
+    # Off 10-20, 30-40, 50-60, 70-80 and 90-95.
+    assert {rep["m.time_off_shift"] for rep in reps} == {45}
+    assert {rep["src.time_off_shift"] for rep in reps} == {45}
+    assert len({rep["snk.num_item_received"] for rep in reps}) > 1
