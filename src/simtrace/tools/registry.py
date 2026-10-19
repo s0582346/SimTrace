@@ -468,7 +468,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
     def render_model_diagram(path: str = "out/model.html") -> dict:
         """Draw the current model as a flowchart in an HTML page at `path`.
 
-        Open the file in a browser to see it. Read-only.
+        Call it after building the model and before run_simulation or
+        run_replications, so the user can check how the model was built
+        before it runs. Open the file in a browser to see it. Read-only.
         """
         return simulation.render_model_diagram(path=path)
 

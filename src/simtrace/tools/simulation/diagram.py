@@ -65,12 +65,7 @@ table { border-collapse: collapse; font-size: 0.9rem; }
 th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
 th { background: #f4f4f6; }
 code { font-size: 0.85rem; }
-@media (prefers-color-scheme: dark) {
-  body { color: #e8e8ea; background: #1b1b1f; }
-  .note { color: #aaa; }
-  .diagram, th, td { border-color: #444; }
-  th { background: #2a2a30; }
-}
+:root { color-scheme: light; }
 """
 
 
@@ -227,8 +222,7 @@ def render_page(model: FactoryModel) -> str:
         _unconnected(model),
         "<script type='module'>",
         f"import mermaid from '{_MERMAID_URL}';",
-        "const dark = matchMedia('(prefers-color-scheme: dark)').matches;",
-        "mermaid.initialize({startOnLoad: true, theme: dark ? 'dark' : 'default',",
+        "mermaid.initialize({startOnLoad: true, theme: 'default',",
         " flowchart: {htmlLabels: true}, securityLevel: 'loose'});",
         "</script></body></html>",
     ])
