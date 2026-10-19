@@ -47,3 +47,5 @@ examples/*
 .firecrawl/
 # Figures written by benchmarks/replication_search.py
 out/
+outputs/
+benchmarks/
