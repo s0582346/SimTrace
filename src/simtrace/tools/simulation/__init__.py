@@ -32,6 +32,7 @@ re-exports them all so `from simtrace.tools.simulation import connect, ...` and
 from __future__ import annotations
 
 from simtrace.tools.simulation.adaptive import find_replication_count
+from simtrace.tools.simulation.diagram import render_model_diagram
 from simtrace.tools.simulation.graph import connect, get_model
 from simtrace.tools.simulation.lifecycle import reset_model, run_simulation
 from simtrace.tools.simulation.rebuild import build_from_spec
@@ -45,4 +46,5 @@ __all__ = [
     "run_replications",
     "find_replication_count",
     "build_from_spec",
+    "render_model_diagram",
 ]

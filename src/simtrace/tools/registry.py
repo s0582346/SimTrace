@@ -465,6 +465,15 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    def render_model_diagram(path: str = "out/model.html") -> dict:
+        """Draw the current model as a flowchart in an HTML page at `path`.
+
+        Open the file in a browser to see it. Read-only.
+        """
+        return simulation.render_model_diagram(path=path)
+
+    @mcp.tool()
+    @traced
     def reset_model() -> dict:
         """Discard the current graph and start a fresh, empty model.
 
