@@ -8,8 +8,9 @@ distributed, and hands the shafts in turn to two mills. Each mill works on one
 shaft at a time and needs 8 minutes per shaft. Both mills put their shafts
 into one shared hardening basket for 12 shafts. Nobody works on them there.
 They lie in the basket on average 20 minutes, normally distributed with a
-standard deviation of 3 minutes. If both mills finish at the same time, the
-shaft from mill 1 goes into the basket first. One measuring machine takes the
+standard deviation of 3 minutes. The shafts go into the basket in the order the
+mills finish them. If both mills finish at the same time, the shaft from mill 1
+goes first. One measuring machine takes the
 shafts from the basket and needs 2.5 minutes per shaft. Then they are shipped.
 There are 10 places before turning and 5 before each mill. When all 10 places
 before turning are full, the next blank waits until a place is free. No blank
@@ -31,7 +32,7 @@ All times in minutes. Every buffer without a stated delay has `delay=0`.
 | `drehen`  | Machine | `processing_delay="uniform(4, 6)"`, `out_edge_selection="ROUND_ROBIN"` |
 | `fraese1` | Machine | `processing_delay=8` |
 | `fraese2` | Machine | `processing_delay=8` |
-| `einlegen`| Machine | `processing_delay=0` |
+| `einlegen`| Machine | `processing_delay=0`, `in_edge_selection="FIRST_AVAILABLE"` |
 | `messen`  | Machine | `processing_delay=2.5` |
 | `versand` | Sink    | |
 
