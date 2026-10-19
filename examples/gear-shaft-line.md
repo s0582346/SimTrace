@@ -61,7 +61,7 @@ flowchart LR
     drehen -->|"buffer · 5"| fraese1{{"mill 1<br/>8"}}
     drehen -->|"buffer · 5"| fraese2{{"mill 2<br/>8"}}
 
-    fraese1 -->|"first"| einlegen{{"into basket<br/>0"}}
+    fraese1 --> einlegen{{"into basket<br/>0"}}
     fraese2 --> einlegen
 
     einlegen -->|"basket · 12 · ~20 min"| messen{{"measuring<br/>2.5"}}
