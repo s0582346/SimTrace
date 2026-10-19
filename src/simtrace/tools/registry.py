@@ -488,7 +488,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
-    def run_simulation(until: float, seed: int | None = None) -> dict:
+    def run_simulation(
+        until: float, seed: int | None = None, report_path: str | None = None
+    ) -> dict:
         """Run the simulation up to time `until` and return a stats summary.
 
         This executes the model: any unmet edge-cardinality requirement (e.g. a
@@ -500,8 +502,13 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 reproduces the run exactly (identical draws, routing, stats);
                 omit it for a fresh random run. Use distinct seeds to sample
                 several reproducible replications of a stochastic model.
+            report_path: optional path of an HTML report, e.g.
+                "out/report.html": the model diagram plus tables of the
+                results. The result then holds `report`, the full path.
         """
-        return simulation.run_simulation(until=until, seed=seed)
+        return simulation.run_simulation(
+            until=until, seed=seed, report_path=report_path
+        )
 
     @mcp.tool()
     @traced
@@ -509,6 +516,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         until: float,
         replications: int = 10,
         random_seed_base: int = 0,
+        report_path: str | None = None,
     ) -> dict:
         """Run the current model many times and report means with confidence intervals.
 
@@ -532,6 +540,10 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             random_seed_base: base RNG seed. Replication i uses
                 `random_seed_base + i * 1000`, so the whole batch replays
                 exactly from this one number.
+            report_path: optional path of an HTML report, e.g.
+                "out/report.html": the model diagram plus tables of the
+                results over all runs. The result then holds `report`, the
+                full path.
 
         Returns a dict with `summary` (a formatted text report — read this
         first), `analysis` (per-metric mean/CI, keyed `node_id.stat_name`;
@@ -547,6 +559,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             until=until,
             replications=replications,
             random_seed_base=random_seed_base,
+            report_path=report_path,
         )
 
     @mcp.tool()

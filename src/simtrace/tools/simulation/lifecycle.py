@@ -55,6 +55,7 @@ def run_simulation(
     seed: int | None = None,
     *,
     model: FactoryModel | None = None,
+    report_path: str | None = None,
 ) -> dict:
     """Run the simulation up to time `until` and return a stats summary.
 
@@ -126,4 +127,10 @@ def run_simulation(
     }
     if part_type_names(model):
         summary["part_types"] = part_type_report(model)
+    if report_path is not None:
+        from simtrace.tools.simulation.report import report_view, write_report
+
+        summary["report"] = write_report(
+            report_path, model, [report_view(summary, model)], until, seed=seed
+        )
     return summary

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
+from datetime import datetime
 from html import escape
 
 from simtrace.model import FactoryModel
@@ -59,13 +61,22 @@ _CSS = """
 body { font-family: system-ui, sans-serif; margin: 0 16px 32px; color: #1d1d1f; background: #fff; }
 h1 { font-size: 1.4rem; margin: 20px 0 4px; }
 h2 { font-size: 1.1rem; margin-top: 28px; }
-.note { color: #555; margin: 0 0 12px; }
+h3 { font-size: 0.95rem; margin: 18px 0 8px; }
+table + .note { margin-top: 6px; }
+.note { color: #222; margin: 0 0 12px; }
 .diagram { overflow-x: auto; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
 table { border-collapse: collapse; font-size: 0.9rem; }
 th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
 th { background: #f4f4f6; }
 code { font-size: 0.85rem; }
 :root { color-scheme: light; }
+header.brand { display: flex; justify-content: space-between; align-items: center;
+  margin: 0 -16px; padding: 10px 16px; background: #0f1b2a; color: #e8eef4; }
+header.brand .mark { display: flex; align-items: center; gap: 8px;
+  font-size: 1.15rem; letter-spacing: 0.02em; }
+header.brand .mark b { color: #2dd4d4; }
+header.brand .stamp { font-size: 0.85rem; color: #9fb0c0; font-variant-numeric: tabular-nums; }
+h1 { border-left: 4px solid #f5b03c; padding-left: 10px; }
 """
 
 
@@ -182,20 +193,80 @@ def mermaid_source(model: FactoryModel) -> str:
     return "\n".join(out)
 
 
+_DAY = 1440
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _clock(minutes: float) -> str:
+    """Minutes since the start of a day as hh:mm. 1440 is 24:00, later wraps."""
+    if minutes > _DAY:
+        minutes -= _DAY
+    hours, rest = divmod(round(minutes), 60)
+    return f"{hours:02d}:{rest:02d}"
+
+
+def _span(start: float, end: float, day_start: float) -> str:
+    return f"{_clock(start - day_start)}–{_clock(end - day_start)}"
+
+
+def _day_plan(windows: list, day_start: float) -> tuple[str, str]:
+    """Working hours and breaks of one day's windows."""
+    hours = _span(windows[0][0], windows[-1][1], day_start)
+    breaks = ", ".join(
+        _span(first[1], second[0], day_start) for first, second in zip(windows, windows[1:])
+    )
+    return hours, breaks
+
+
+def _calendar_plan(cycle: float, windows: list) -> tuple[str, str]:
+    """Working hours and breaks as clock times, for a cycle of a day or a week
+    in minutes. Other cycles keep their raw windows and get no breaks."""
+    windows = [tuple(window) for window in windows]
+    if cycle == _DAY:
+        # A night shift over midnight is a last and a first window that touch it.
+        if len(windows) > 1 and windows[0][0] == 0 and windows[-1][1] == cycle:
+            windows = windows[1:-1] + [(windows[-1][0], windows[0][1] + cycle)]
+        return _day_plan(windows, 0)
+    if cycle != 7 * _DAY:
+        raw = ", ".join(f"{start:g}–{end:g}" for start, end in windows)
+        return raw, ""
+
+    # Group days with the same plan that follow each other, e.g. "Mon–Fri".
+    groups: list[list] = []
+    for day, name in enumerate(_WEEKDAYS):
+        own = [w for w in windows if day * _DAY <= w[0] < (day + 1) * _DAY]
+        plan = _day_plan(own, day * _DAY) if own else None
+        if groups and groups[-1][2] == plan and groups[-1][1] == day - 1:
+            groups[-1][1] = day
+        else:
+            groups.append([day, day, plan])
+    hours, breaks = [], []
+    for first, last, plan in groups:
+        if plan is None:
+            continue
+        days = _WEEKDAYS[first] if first == last else f"{_WEEKDAYS[first]}–{_WEEKDAYS[last]}"
+        hours.append(f"{days} {plan[0]}")
+        if plan[1]:
+            breaks.append(f"{days} {plan[1]}")
+    return "; ".join(hours), "; ".join(breaks)
+
+
 def _calendar_table(model: FactoryModel) -> str:
     if not model.calendars:
         return ""
     rows = []
     for calendar_id, calendar in model.calendars.items():
-        windows = ", ".join(f"{start:g}–{end:g}" for start, end in calendar.windows)
+        hours, breaks = _calendar_plan(calendar.cycle, calendar.windows)
+        cycle = {_DAY: "day", 7 * _DAY: "week"}.get(calendar.cycle, f"{calendar.cycle:g}")
         default = "yes" if calendar_id == model.default_calendar else ""
         rows.append(
-            f"<tr><td><code>{escape(calendar_id)}</code></td><td>{calendar.cycle:g}</td>"
-            f"<td>{escape(windows)}</td><td>{default}</td></tr>"
+            f"<tr><td><code>{escape(calendar_id)}</code></td><td>{cycle}</td>"
+            f"<td>{escape(hours)}</td><td>{escape(breaks) or '–'}</td><td>{default}</td></tr>"
         )
     return (
-        "<h2>Calendars</h2><table><tr><th>Calendar</th><th>Cycle</th>"
-        "<th>Working windows</th><th>Default</th></tr>" + "".join(rows) + "</table>"
+        "<h3>Calendars</h3><table><tr><th>Calendar</th><th>Cycle</th>"
+        "<th>Working hours</th><th>Breaks</th><th>Default</th></tr>"
+        + "".join(rows) + "</table>"
     )
 
 
@@ -204,28 +275,124 @@ def _unconnected(model: FactoryModel) -> str:
     if not loose:
         return ""
     names = ", ".join(f"<code>{escape(edge_id)}</code>" for edge_id in loose)
-    return f"<h2>Not connected</h2><p>{names}</p>"
+    return f"<h3>Not connected</h3><p>{names}</p>"
 
 
-def render_page(model: FactoryModel) -> str:
-    source = mermaid_source(model)
+def _setting(name: str, value: object) -> str:
+    """One setting as it is written in a create_* call, e.g. capacity=10."""
+    if isinstance(value, str):
+        text = f'{name}="{value}"'
+    elif isinstance(value, (dict, list, tuple)):
+        text = f"{name}={json.dumps(value)}"
+    else:
+        text = f"{name}={value}"
+    return f"<code>{escape(text)}</code>"
+
+
+def _call_settings(op: str, kwargs: dict) -> str:
+    """Every setting of a create_* call that is not its default."""
+    defaults = _defaults(op)
+    parts = [
+        _setting(name, value)
+        for name, value in kwargs.items()
+        if name != "id"
+        and value is not None
+        and (name in _ALWAYS or name not in defaults or value != defaults[name])
+    ]
+    return ", ".join(parts)
+
+
+def technical_definition(model: FactoryModel) -> str:
+    """Node, edge and calendar tables built from the model's build log."""
+    ends = {
+        step["kwargs"]["edge_id"]: (step["kwargs"]["src_id"], step["kwargs"]["dest_id"])
+        for step in model.spec if step["op"] == "connect"
+    }
+    node_rows, edge_rows = [], []
+    for step in model.spec:
+        op, kwargs = step["op"], step["kwargs"]
+        if op in _NODE_OPS:
+            node_rows.append(
+                f"<tr><td><code>{escape(kwargs['id'])}</code></td><td>{_NODE_OPS[op]}</td>"
+                f"<td>{_call_settings(op, kwargs)}</td></tr>"
+            )
+        elif op in _EDGE_OPS:
+            src, dest = ends.get(kwargs["id"], ("–", "–"))
+            edge_rows.append(
+                f"<tr><td><code>{escape(kwargs['id'])}</code></td><td>{_EDGE_OPS[op]}</td>"
+                f"<td><code>{escape(src)}</code></td><td><code>{escape(dest)}</code></td>"
+                f"<td>{_call_settings(op, kwargs)}</td></tr>"
+            )
+    out = ["<h2>Technical definition</h2>"]
+    if node_rows:
+        out.append(
+            "<h3>Nodes</h3><table><tr><th>Node</th><th>Type</th><th>Settings</th></tr>"
+            + "".join(node_rows) + "</table>"
+        )
+    if model.default_calendar:
+        out.append(
+            f"<p class='note'>Every machine and source without a <code>calendar</code> "
+            f"follows <code>{escape(model.default_calendar)}</code>.</p>"
+        )
+    if edge_rows:
+        out.append(
+            "<h3>Edges</h3><table><tr><th>Edge</th><th>Type</th><th>From</th><th>To</th>"
+            "<th>Settings</th></tr>" + "".join(edge_rows) + "</table>"
+        )
+    out.append(_calendar_table(model))
+    out.append(_unconnected(model))
+    return "".join(out)
+
+
+def diagram_section(model: FactoryModel) -> str:
+    """The diagram, then the technical definition, as page body."""
+    return "".join([
+        f"<div class='diagram'><pre class='mermaid'>{escape(mermaid_source(model))}</pre></div>",
+        technical_definition(model),
+    ])
+
+
+def _brand_header() -> str:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    return (
+        "<header class='brand'><span class='mark'>"
+        "<span>sim<b>trace</b></span></span>"
+        f"<span class='stamp'>{stamp}</span></header>"
+    )
+
+
+def page(title: str, body: str, css: str = "") -> str:
+    """A complete HTML page with the brand header that draws every Mermaid
+    block in `body`."""
     return "".join([
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width, initial-scale=1'>",
-        "<title>Model diagram</title>",
-        f"<style>{_CSS}</style></head><body>",
-        "<h1>Model diagram</h1>",
-        f"<p class='note'>{len(model.nodes)} nodes, {len(model.edges)} edges. "
-        "Settings at their default are left out.</p>",
-        f"<div class='diagram'><pre class='mermaid'>{escape(source)}</pre></div>",
-        _calendar_table(model),
-        _unconnected(model),
+        f"<title>{escape(title)}</title>",
+        f"<style>{_CSS}{css}</style></head><body>",
+        _brand_header(),
+        f"<h1>{escape(title)}</h1>",
+        body,
         "<script type='module'>",
         f"import mermaid from '{_MERMAID_URL}';",
         "mermaid.initialize({startOnLoad: true, theme: 'default',",
         " flowchart: {htmlLabels: true}, securityLevel: 'loose'});",
         "</script></body></html>",
     ])
+
+
+def write_page(path: str, html: str) -> str:
+    """Write `html` to `path`, creating the folder, and return the full path."""
+    target = os.path.abspath(path)
+    parent = os.path.dirname(target)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write(html)
+    return target
+
+
+def render_page(model: FactoryModel) -> str:
+    return page("Model diagram", diagram_section(model))
 
 
 def render_model_diagram(
@@ -237,12 +404,7 @@ def render_model_diagram(
         raise ValueError(
             "The model is empty. Build it with the create_* tools first."
         )
-    target = os.path.abspath(path)
-    parent = os.path.dirname(target)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(target, "w", encoding="utf-8") as handle:
-        handle.write(render_page(model))
+    target = write_page(path, render_page(model))
     return {
         "path": target,
         "nodes": len(model.nodes),

@@ -52,6 +52,7 @@ from simtrace.tools.simulation.precision import (
     validate_settings,
 )
 from simtrace.tools.simulation.rebuild import build_from_spec
+from simtrace.tools.simulation.report import report_view, write_report
 from simtrace.tools.simulation.replication_analysis import (
     ReplicationAnalyzer,
     extract_metrics,
@@ -171,7 +172,12 @@ def _run_one(
         "seed": seed,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    return {"replication": replication, "seed": seed, "metrics": metrics}
+    return {
+        "replication": replication,
+        "seed": seed,
+        "metrics": metrics,
+        "view": report_view(result, replica),
+    }
 
 
 def run_replications(
@@ -183,6 +189,7 @@ def run_replications(
     precision_tables_for: List[str] | None = None,
     model: FactoryModel | None = None,
     n_jobs: int | None = None,
+    report_path: str | None = None,
 ) -> Dict[str, Any]:
     """Run `replications` independent runs of the assembled model and analyze them.
 
@@ -284,12 +291,14 @@ def run_replications(
     # Outcomes are in replication order on both paths, so `failures` and
     # `_individual_replications` read the same either way.
     successful: List[Dict[str, Any]] = []
+    views: List[Dict[str, Any]] = []
     failures: List[Dict[str, Any]] = []
     for outcome in outcomes:
         if "error" in outcome:
             failures.append(outcome)
         else:
             successful.append(outcome["metrics"])
+            views.append(outcome["view"])
 
     if len(successful) < MIN_REPLICATIONS:
         raise ValueError(
@@ -317,7 +326,7 @@ def run_replications(
         tables_for=tables_for,
     )
 
-    return {
+    result = {
         "analysis": analysis,
         "summary": summary,
         "precision": precision,
@@ -326,3 +335,9 @@ def run_replications(
         "failures": failures,
         "execution": parallel.describe(workers),
     }
+    if report_path is not None:
+        result["report"] = write_report(
+            report_path, source, views, until,
+            seed_base=random_seed_base, requested=replications,
+        )
+    return result

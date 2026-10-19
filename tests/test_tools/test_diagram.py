@@ -46,7 +46,7 @@ def test_writes_page_and_reports_counts(tmp_path):
     page = target.read_text(encoding="utf-8")
     assert "<pre class='mermaid'>" in page
     assert "mermaid@10.9.1" in page
-    assert "<h2>Calendars</h2>" in page
+    assert "<h3>Calendars</h3>" in page
 
 
 def test_nodes_get_shapes_and_settings():
@@ -129,10 +129,59 @@ def test_unconnected_edges_are_listed(tmp_path):
     target = tmp_path / "m.html"
     render_model_diagram(str(target), model=model)
     page = target.read_text(encoding="utf-8")
-    assert "<h2>Not connected</h2>" in page
+    assert "<h3>Not connected</h3>" in page
     assert "<code>loose</code>" in page
 
 
 def test_empty_model_rejected(tmp_path):
     with pytest.raises(ValueError, match="empty"):
         render_model_diagram(str(tmp_path / "m.html"), model=FactoryModel())
+
+
+def test_day_calendar_as_clock_times():
+    from simtrace.tools.simulation.diagram import _calendar_plan
+    windows = [[360, 540], [555, 720], [750, 1020], [1035, 1200], [1230, 1320]]
+    assert _calendar_plan(1440, windows) == (
+        "06:00–22:00", "09:00–09:15, 12:00–12:30, 17:00–17:15, 20:00–20:30"
+    )
+    assert _calendar_plan(1440, [[360, 1320]]) == ("06:00–22:00", "")
+
+
+def test_night_shift_over_midnight():
+    from simtrace.tools.simulation.diagram import _calendar_plan
+    assert _calendar_plan(1440, [[0, 360], [1320, 1440]]) == ("22:00–06:00", "")
+
+
+def test_week_calendar_groups_equal_days():
+    from simtrace.tools.simulation.diagram import _calendar_plan
+    day = [[360, 720], [750, 1320]]
+    windows = [[d * 1440 + s, d * 1440 + e] for d in range(5) for s, e in day]
+    windows.append([5 * 1440 + 480, 5 * 1440 + 720])
+    assert _calendar_plan(10080, windows) == (
+        "Mon–Fri 06:00–22:00; Sat 08:00–12:00", "Mon–Fri 12:00–12:30"
+    )
+
+
+def test_other_cycle_keeps_raw_windows():
+    from simtrace.tools.simulation.diagram import _calendar_plan
+    assert _calendar_plan(20, [[0, 10]]) == ("0–10", "")
+
+
+def test_calendar_table_in_page(tmp_path):
+    target = tmp_path / "model.html"
+    render_model_diagram(str(target), model=_routed_line())
+    html = target.read_text(encoding="utf-8")
+    assert "<th>Working hours</th><th>Breaks</th>" in html
+    assert "<td>day</td><td>06:00–22:00</td><td>–</td>" in html
+
+
+def test_technical_definition_lists_settings_and_wiring():
+    from simtrace.tools.simulation.diagram import technical_definition
+    html = technical_definition(_routed_line())
+    assert "<h2>Technical definition</h2>" in html
+    assert "<code>inter_arrival_time=&quot;exp(5)&quot;</code>" in html
+    assert "<code>routes={&quot;A&quot;: &quot;b_good&quot;, &quot;*&quot;: &quot;b_scrap&quot;}</code>" in html
+    assert "<td><code>b_a</code></td><td>Buffer</td><td><code>src_a</code></td><td><code>m</code></td>" in html
+    assert "follows <code>day</code>" in html
+    # Defaults stay out, e.g. blocking=True on a machine.
+    assert "blocking=True" not in html
