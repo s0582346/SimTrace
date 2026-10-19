@@ -2,20 +2,20 @@
 
 ## Plain words
 
-Blanks arrive on average every 3 minutes, exponentially distributed. A lathe
-turns each blank in 4 to 6 minutes, uniformly distributed, and hands the
-shafts in turn to two mills. Milling takes on average 8 minutes, normally
-distributed with a standard deviation of 1 minute. Behind each mill the shafts
-lie in a hardening basket for 6 shafts, on average 20 minutes, normally
-distributed with a standard deviation of 3 minutes. One measuring machine
-takes them from both baskets, the one behind mill 1 first, and needs 2 to 3
-minutes per shaft, uniformly distributed. Then they are shipped. There are 10
-places before turning and 5 before each mill, and a station waits when the
-buffer after it is full. The lathe has an MTBF of 240 minutes
-and an MTTR of 20 minutes, with repairs between 15 and 25 minutes. Each mill
-has an MTBF of 600 and an MTTR of 20 minutes, measuring an MTBF of 480 and an
-MTTR of 10 minutes. MTBF counts from one failure to the next. Simulate one week,
-2400 minutes, starting empty.
+> Blanks arrive on average every 3 minutes, exponentially distributed. A lathe
+> turns each blank in 4 to 6 minutes, uniformly distributed, and hands the
+> shafts in turn to two mills. Milling takes on average 8 minutes, normally
+> distributed with a standard deviation of 1 minute. Behind each mill the shafts
+> lie in a hardening basket for 6 shafts, on average 20 minutes, normally
+> distributed with a standard deviation of 3 minutes. One measuring machine
+> takes them from both baskets, the one behind mill 1 first, and needs 2 to 3
+> minutes per shaft, uniformly distributed. Then they are shipped. There are 10
+> places before turning and 5 before each mill, and a station waits when the
+> buffer after it is full. The lathe has an MTBF of 240 minutes
+> and an MTTR of 20 minutes, with repairs between 15 and 25 minutes. Each mill
+> has an MTBF of 600 and an MTTR of 20 minutes, measuring an MTBF of 480 and an
+> MTTR of 10 minutes. MTBF counts from one failure to the next. Simulate one > week,
+> 2400 minutes, starting empty.
 
 ## Question
 
