@@ -191,3 +191,45 @@ def test_report_has_three_tabs(tmp_path):
     assert "class='mermaid'" in model_tab and "Technical definition" in model_tab
     output_tab = html[html.index("id='tab-1'"):html.index("id='tab-2'")]
     assert "Output</h2>" in output_tab and "Stations</h2>" in output_tab
+
+
+def _validation_tab(html):
+    return html[html.index("id='tab-2'"):]
+
+
+def test_validation_tab_shows_validate_model_summary(tmp_path):
+    target = tmp_path / "run.html"
+    _quiet(run_simulation, 100, seed=1, model=_line(), report_path=str(target))
+    tab = _validation_tab(target.read_text(encoding="utf-8"))
+    assert "<h2><code>validate_model</code></h2>" in tab
+    assert "<span class='status pass'>0 errors, 0 warnings</span>" in tab
+    assert "<details" not in tab
+
+
+def test_validation_tab_lists_warnings_in_a_toggle(tmp_path):
+    model = _line()
+    create_shift_calendar("spare", 100, [[0, 50]], model=model)
+    target = tmp_path / "run.html"
+    _quiet(run_simulation, 100, seed=1, model=model, report_path=str(target))
+    tab = _validation_tab(target.read_text(encoding="utf-8"))
+    assert "<span class='status warn'>0 errors, 1 warning</span>" in tab
+    assert "<summary>Warnings (1)</summary>" in tab
+    assert "<code>unused_calendar</code> at <code>spare</code>" in tab
+    assert "Errors (" not in tab
+
+
+def test_overload_warning_is_a_table(tmp_path):
+    model = FactoryModel()
+    create_source("src", inter_arrival_time=3, blocking=True, model=model)
+    create_machine("m", processing_delay=5, model=model)
+    create_sink("snk", model=model)
+    create_buffer("b_in", capacity=4, model=model)
+    create_buffer("b_out", capacity=1, model=model)
+    connect("b_in", "src", "m", model=model)
+    connect("b_out", "m", "snk", model=model)
+    target = tmp_path / "run.html"
+    _quiet(run_simulation, 50, seed=1, model=model, report_path=str(target))
+    tab = _validation_tab(target.read_text(encoding="utf-8"))
+    assert "<th>Machine</th><th class='num'>Effective process time [min]</th>" in tab
+    assert "<td><code>m</code></td><td class='num'>5.00</td><td class='num'>3.00</td><td class='num'>167%</td>" in tab
+    assert "<li>" not in tab

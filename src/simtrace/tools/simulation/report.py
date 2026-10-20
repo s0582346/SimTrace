@@ -36,6 +36,18 @@ nav.tabs button { font: inherit; padding: 8px 16px; border: 1px solid #ccc;
 nav.tabs button.active { background: #0f1b2a; border-color: #0f1b2a; color: #fff; }
 section.tab { display: none; }
 section.tab.active { display: block; }
+h2 code { font-size: inherit; }
+.status { display: inline-block; padding: 3px 10px; border-radius: 12px; font-weight: 600; }
+.status.pass { background: #e3f4e8; color: #1f6b35; }
+.status.warn { background: #fdf1d8; color: #8a5a00; }
+.status.fail { background: #fbe3e3; color: #a12828; }
+details.findings { margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; padding: 6px 12px; }
+details.findings summary { cursor: pointer; font-weight: 600; }
+details.findings.warn summary { color: #8a5a00; }
+details.findings.fail summary { color: #a12828; }
+details.findings li { margin: 8px 0; }
+details.findings p.check { margin: 12px 0 6px; }
+details.findings table { margin-bottom: 8px; }
 ul.settings { color: #222; margin: 0 0 12px; padding-left: 20px; }
 """
 
@@ -343,6 +355,95 @@ def _tabbed(tabs: list[tuple[str, str]]) -> str:
     return f"<nav class='tabs'>{buttons}</nav>{sections}{_TAB_SCRIPT}"
 
 
+def _count(number: int, word: str) -> str:
+    return f"{number} {word}" + ("" if number == 1 else "s")
+
+
+# Checks whose findings carry numbers: a one-line description, the name of
+# the component column, and (details key, column header, unit) per column.
+_DETAIL_TABLES = {
+    "station_overload": (
+        "Machines that get more parts than they can finish.",
+        "Machine",
+        [
+            ("effective_process_time", "Effective process time [min]", "time"),
+            ("interarrival_time", "Interarrival time [min]", "time"),
+            ("utilization", "Utilization [%]", "share"),
+        ],
+    ),
+}
+
+
+def _detail_value(value: float, unit: str) -> str:
+    return f"{100 * value:.0f}%" if unit == "share" else f"{value:.2f}"
+
+
+def _detail_table(check: str, findings: list[dict]) -> str:
+    description, component, columns = _DETAIL_TABLES[check]
+    rows = "".join(
+        f"<tr><td><code>{escape(f['component'] or '')}</code></td>"
+        + "".join(
+            f"<td class='num'>{_detail_value(f['details'][key], unit)}</td>"
+            for key, _, unit in columns
+        )
+        + "</tr>"
+        for f in findings
+    )
+    head = "".join(
+        f"<th class='num'>{escape(header)}</th>" for _, header, _ in columns
+    )
+    return (
+        f"<p class='check'><code>{escape(check)}</code> {escape(description)}</p>"
+        f"<table><tr><th>{component}</th>{head}</tr>{rows}</table>"
+    )
+
+
+def _findings_list(title: str, findings: list[dict], kind: str) -> str:
+    if not findings:
+        return ""
+    tabled = [f for f in findings if f["check"] in _DETAIL_TABLES and "details" in f]
+    listed = [f for f in findings if f not in tabled]
+    tables = "".join(
+        _detail_table(check, [f for f in tabled if f["check"] == check])
+        for check in dict.fromkeys(f["check"] for f in tabled)
+    )
+    items = "".join(
+        f"<li><code>{escape(f['check'])}</code>"
+        + (f" at <code>{escape(f['component'])}</code>" if f.get("component") else "")
+        + f"<br>{escape(f['message'])}</li>"
+        for f in listed
+    )
+    return (
+        f"<details class='findings {kind}'><summary>{title} ({len(findings)})</summary>"
+        + tables
+        + (f"<ul>{items}</ul>" if items else "")
+        + "</details>"
+    )
+
+
+def _validate_model_section(model: FactoryModel) -> str:
+    """validate_model on the model as it was run: a summary line, then the
+    errors and warnings as lists that open on click."""
+    # Imported here: the validation package imports the simulation package.
+    from simtrace.tools.validation.model_check import validate_model
+
+    result = validate_model(model=model)
+    errors, warnings = result["errors"], result["warnings"]
+    if errors:
+        status = "fail"
+    elif warnings:
+        status = "warn"
+    else:
+        status = "pass"
+    summary = f"{_count(len(errors), 'error')}, {_count(len(warnings), 'warning')}"
+    return (
+        "<h2><code>validate_model</code></h2>"
+        f"<p><span class='status {status}'>{escape(summary)}</span></p>"
+        + _findings_list("Errors", errors, "fail")
+        + _findings_list("Warnings", warnings, "warn")
+    )
+
+
 def render_report(
     model: FactoryModel,
     views: list[dict],
@@ -361,7 +462,7 @@ def render_report(
             _buffers(model, views),
             _part_types(views),
         ])),
-        ("Validation", "<p class='note'>No validation results yet.</p>"),
+        ("Validation", _validate_model_section(model)),
     ]
     body = _settings_line(len(views), until, seed, seed_base, requested) + _tabbed(tabs)
     title = "Single-Run Report" if requested is None else "Replication Report"
