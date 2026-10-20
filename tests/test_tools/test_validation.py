@@ -11,6 +11,7 @@ from simtrace.tools.builders import (
     create_combiner,
     create_machine,
     create_sink,
+    create_splitter,
     create_source,
 )
 from simtrace.tools.simulation import connect, run_simulation
@@ -524,3 +525,99 @@ def test_item_paths_reflect_only_the_last_run(two_machine_line):
     run_simulation(20, model=two_machine_line)
     # Paths from before are gone; only the 10->20 window's items remain keyed.
     assert two_machine_line.env.now == 20
+
+
+# --- routes, repeat visits, not delivered, warnings ------------------------
+
+
+def _inspect_line(model, shares, part_type="alu"):
+    """src -> b_in -> inspect -> b_ok -> ship, inspect -> b_bad -> scrap,
+    inspect -> b_back -> inspect (rework)."""
+    create_source("src", inter_arrival_time=1, blocking=True, part_type=part_type,
+                  model=model)
+    create_machine("inspect", processing_delay=0.5, route_shares=shares, model=model)
+    create_sink("ship", model=model)
+    create_sink("scrap", scrap=True, model=model)
+    for edge_id in ("b_in", "b_ok", "b_bad", "b_back"):
+        create_buffer(edge_id, capacity=50, model=model)
+    connect("b_in", "src", "inspect", model=model)
+    connect("b_ok", "inspect", "ship", model=model)
+    connect("b_bad", "inspect", "scrap", model=model)
+    connect("b_back", "inspect", "inspect", model=model)
+    return model
+
+
+def test_item_flow_groups_routes_by_part_type(model):
+    _inspect_line(model, {"b_ok": 0.6, "b_bad": 0.2, "b_back": 0.2})
+    run_simulation(200, seed=3, model=model)
+    report = verify_item_flow(model=model)
+    routes = report["routes"]
+    assert {r["part_type"] for r in routes} == {"alu"}
+    assert sum(r["items"] for r in routes) == report["delivered"]
+    assert sum(r["share"] for r in routes) == pytest.approx(1)
+    first = routes[0]
+    assert first["route"] == ["src", "inspect", "ship"] and not first["scrap"]
+    assert any(r["end"] == "scrap" and r["scrap"] for r in routes)
+
+
+def test_item_flow_counts_repeat_visits(model):
+    _inspect_line(model, {"b_ok": 0.6, "b_bad": 0.2, "b_back": 0.2})
+    run_simulation(200, seed=3, model=model)
+    report = verify_item_flow(model=model)
+    looped = [r for r in report["routes"] if r["route"].count("inspect") > 1]
+    (repeat,) = report["repeat_visits"]
+    assert repeat["node"] == "inspect"
+    assert repeat["items"] == sum(r["items"] for r in looped)
+    assert repeat["max_visits"] == max(r["route"].count("inspect") for r in looped)
+
+
+def test_item_flow_warns_about_a_type_that_only_reaches_scrap(model):
+    _inspect_line(model, {"b_bad": 1.0})
+    run_simulation(50, seed=1, model=model)
+    checks = {(w["check"], w["component"]) for w in verify_item_flow(model=model)["warnings"]}
+    assert ("type_not_delivered", "alu") in checks
+    assert ("unvisited_station", "ship") in checks
+
+
+def test_item_flow_lists_where_undelivered_items_wait(two_machine_line):
+    run_simulation(20, model=two_machine_line)
+    report = verify_item_flow(model=two_machine_line)
+    waiting = sum(r["items"] for r in report["not_delivered"])
+    assert waiting == len(two_machine_line.item_paths) - report["delivered"]
+    assert all(r["place"] in two_machine_line.edges or r["place"] in two_machine_line.nodes
+               for r in report["not_delivered"])
+
+
+def test_item_flow_follows_parts_on_their_pallet(model):
+    create_source("parts", inter_arrival_time=1, blocking=True, model=model)
+    create_source("pallets", inter_arrival_time=4, flow_item_type="pallet",
+                  blocking=True, model=model)
+    create_combiner("pack", target_quantity_of_each_item=[1, 2], processing_delay=1,
+                    model=model)
+    create_splitter("unpack", processing_delay=1, model=model)
+    create_sink("snk", model=model)
+    for edge_id in ("b_parts", "b_pallets", "b_packed", "b_out"):
+        create_buffer(edge_id, capacity=10, model=model)
+    connect("b_pallets", "pallets", "pack", model=model)
+    connect("b_parts", "parts", "pack", model=model)
+    connect("b_packed", "pack", "unpack", model=model)
+    connect("b_out", "unpack", "snk", model=model)
+    run_simulation(60, seed=1, model=model)
+    report = verify_item_flow(model=model)
+    assert report["delivered"] > 0 and report["all_proper"], report["improper"][:1]
+    routes = {(r["route"][0], tuple(r["route"])) for r in report["routes"]}
+    assert ("parts", ("parts", "pack", "unpack", "snk")) in routes
+
+
+def test_item_flow_counts_an_item_the_machine_took_at_the_machine(model):
+    create_source("src", inter_arrival_time=1, blocking=True, model=model)
+    create_machine("slow", processing_delay=100, model=model)
+    create_sink("snk", model=model)
+    create_buffer("b_in", capacity=3, model=model)
+    create_buffer("b_out", capacity=1, model=model)
+    connect("b_in", "src", "slow", model=model)
+    connect("b_out", "slow", "snk", model=model)
+    run_simulation(20, model=model)
+    waiting = {r["place"]: r["items"] for r in verify_item_flow(model=model)["not_delivered"]}
+    assert waiting["slow"] == 1
+    assert waiting["b_in"] == 3

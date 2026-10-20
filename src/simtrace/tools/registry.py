@@ -723,6 +723,14 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         sink. Clean items are counted in `passed`; an item that took a hop with no
         wired edge behind it is listed in `improper` with the offending hop. Only delivered items are judged (stuck/discarded items are
         verify_conservation's concern). Requires a prior run_simulation.
+
+        Also returns where the items went: `routes` (delivered items per part
+        type and station sequence, with end sink, scrap flag and share),
+        `repeat_visits` (items that passed a station more than once),
+        `not_delivered` (items still in the line, by where they wait) and
+        `warnings` (unvisited_station: no item passed a node;
+        type_not_delivered: a part type reached no non-scrap sink). Compare
+        the routes with the plant description.
         """
         return validation.verify_item_flow()
 

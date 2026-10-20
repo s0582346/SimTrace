@@ -168,6 +168,7 @@ def _norm_item(item: str | None) -> str | None:
 def build_item_paths(
     events: Sequence[dict[str, Any]],
     edge_ids: Collection[str] = (),
+    combiner_ids: Collection[str] = (),
 ) -> dict[str, list[str]]:
     """Reconstruct each item's trail through the plant from a run's events.
 
@@ -191,12 +192,21 @@ def build_item_paths(
     Holding one per item (rather than pre-indexing the pairs) keeps this right when
     an item crosses the same edge twice in a rework loop.
 
+    A **Combiner** takes a pallet and parts (`get`) and puts out only the pallet.
+    The parts it took since its last put ride on that pallet: when a part shows
+    up again (a Splitter puts it), the pallet's trail from the Combiner on is
+    copied into the part's trail first, so the part's route stays unbroken. With
+    several workers the parts are given to the next pallet the Combiner puts.
+    Pass the Combiners' ids as `combiner_ids`.
+
     Pass `edge_ids` (the model's wired edge ids) so an `edge_put` line whose id is
     not a real edge cannot enter a trail. Pure function over already-collected
     events: no simulation needed to test it.
     """
     trails: dict[str, list[str]] = {}
     pending: dict[str, str] = {}
+    held: dict[str, list[str]] = {}            # node -> items it got, not yet put
+    riding: dict[str, tuple[str, int]] = {}    # part -> (pallet, index in its trail)
 
     def emit(item: str, element: str) -> None:
         trail = trails.setdefault(item, [])
@@ -232,13 +242,25 @@ def build_item_paths(
                 del pending[item]
             else:
                 flush(item)
+            if item in riding:
+                pallet, start = riding.pop(item)
+                for element in trails.get(pallet, [])[start:]:
+                    emit(item, element)
             emit(item, node)
             if edge is not None:
                 emit(item, edge)
+            # Whatever this node took besides `item` rides on `item` from here.
+            for part in held.pop(node, []):
+                if part != item:
+                    riding[part] = (item, len(trails[item]) - (2 if edge else 1))
         else:
             # received / process_start / get / …: nothing more is coming to
             # attribute a held edge, so it stands on its own.
             flush(item)
+            if kind == "get":
+                node = event.get("node")
+                if node in combiner_ids:
+                    held.setdefault(node, []).append(item)
             if kind == "received":
                 node = event.get("node")
                 if node is not None:

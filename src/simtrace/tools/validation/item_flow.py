@@ -17,11 +17,16 @@ a Sink.
 
 from __future__ import annotations
 
+from collections import Counter
+
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
+from simtrace.tools.telemetry import _norm_item
 
 _SOURCE_TYPE = "Source"
 _SINK_TYPE = "Sink"
+# Event kinds in which a node handles an item.
+_ITEM_EVENTS = {"generated", "received", "get", "put", "process_start", "process_end"}
 
 
 def _endpoints(edge: object) -> tuple[str | None, str | None]:
@@ -196,11 +201,160 @@ def _first_bad_step(
     return None
 
 
+def _part_type(model: FactoryModel, item_id: str) -> str | None:
+    return model.item_attributes.get(item_id, {}).get("part_type")
+
+
+def _routes(
+    model: FactoryModel, delivered: dict[str, list[str]]
+) -> list[dict]:
+    """Delivered items grouped by part type and the stations they passed.
+
+    `share` is the row's part of its part type, or of its Source for items
+    without a part type.
+
+    Example:
+        100 items of type "alu", 95 via src -> M1 -> ship, 5 via src -> M1 ->
+        scrap, give two rows with share 0.95 and 0.05.
+    """
+    counts: Counter = Counter()
+    for item_id, trail in delivered.items():
+        stations = tuple(e for e in trail if e in model.nodes)
+        counts[(_part_type(model, item_id), stations)] += 1
+    def group(part_type: str | None, stations: tuple) -> str:
+        return part_type if part_type is not None else stations[0]
+
+    per_group: Counter = Counter()
+    for (part_type, stations), n in counts.items():
+        per_group[group(part_type, stations)] += n
+    rows = [
+        {
+            "part_type": part_type,
+            "route": list(stations),
+            "end": stations[-1],
+            "scrap": bool(getattr(model.nodes[stations[-1]], "scrap", False)),
+            "items": n,
+            "share": n / per_group[group(part_type, stations)],
+        }
+        for (part_type, stations), n in counts.items()
+    ]
+    rows.sort(key=lambda r: (group(r["part_type"], r["route"]), -r["items"], r["route"]))
+    return rows
+
+
+def _repeat_visits(
+    model: FactoryModel, delivered: dict[str, list[str]]
+) -> list[dict]:
+    """Per station, the delivered items that passed it more than once.
+
+    Example:
+        3 items went through M1 twice and one three times:
+        {"node": "M1", "items": 4, "max_visits": 3}.
+    """
+    items: Counter = Counter()
+    most: dict[str, int] = {}
+    for trail in delivered.values():
+        for node_id, n in Counter(e for e in trail if e in model.nodes).items():
+            if n > 1:
+                items[node_id] += 1
+                most[node_id] = max(most.get(node_id, 0), n)
+    return [
+        {"node": node_id, "items": items[node_id], "max_visits": most[node_id]}
+        for node_id in model.nodes
+        if node_id in items
+    ]
+
+
+def _flow_warnings(
+    model: FactoryModel,
+    trails: dict[str, list[str]],
+    delivered: dict[str, list[str]],
+) -> list[dict]:
+    """Stations no item touched and part types with no good part at a sink."""
+    touched = {
+        event.get("node")
+        for event in model.events
+        if event.get("kind") in _ITEM_EVENTS and event.get("item")
+    }
+    for trail in trails.values():
+        touched.update(trail)
+    warnings = [
+        {
+            "check": "unvisited_station",
+            "component": node_id,
+            "message": f"No item passed through {node_id} in the run.",
+        }
+        for node_id in model.nodes
+        if node_id not in touched
+    ]
+    started: Counter = Counter(_part_type(model, i) for i in trails)
+    good: Counter = Counter(
+        _part_type(model, i)
+        for i, trail in delivered.items()
+        if not getattr(model.nodes[trail[-1]], "scrap", False)
+    )
+    for part_type, n in started.items():
+        if part_type is not None and good[part_type] == 0:
+            warnings.append({
+                "check": "type_not_delivered",
+                "component": part_type,
+                "message": (
+                    f"{n} items of part type {part_type} entered the line, "
+                    f"none reached a sink that is not a scrap sink."
+                ),
+            })
+    return warnings
+
+
+def _waiting_places(model: FactoryModel, items: list[str], trails: dict[str, list[str]]) -> Counter:
+    """Where each undelivered item is at run end.
+
+    A trail ends at the edge an item was last put into, but a machine may
+    already have taken it from there. The item's last event then names that
+    machine. A part a Combiner took is wherever its pallet is.
+
+    Example:
+        A trail ending in b_mill1 whose last event is "mill1 gets item" is
+        counted at mill1, not at b_mill1.
+    """
+    combiners = {
+        node_id for node_id, node in model.nodes.items()
+        if type(node).__name__ == "Combiner"
+    }
+    last: dict[str, tuple[str, str]] = {}
+    held: dict[str, list[str]] = {}
+    carrier: dict[str, str] = {}
+    for event in model.events:
+        item = _norm_item(event.get("item"))
+        kind, node = event.get("kind"), event.get("node")
+        if item is None or kind not in _ITEM_EVENTS | {"edge_put"}:
+            continue
+        last[item] = (kind, node)
+        if kind == "get" and node in combiners:
+            held.setdefault(node, []).append(item)
+        elif kind == "put" and node in combiners:
+            for part in held.pop(node, []):
+                if part != item:
+                    carrier[part] = item
+
+    def place(item: str, depth: int = 0) -> str:
+        kind, node = last.get(item, (None, None))
+        if kind == "get" and node in combiners and item in carrier and depth < 10:
+            return place(carrier[item], depth + 1)
+        if kind in ("get", "process_start", "process_end") and node is not None:
+            return node
+        trail = trails.get(item)
+        return trail[-1] if trail else str(node)
+
+    return Counter(place(item) for item in items)
+
+
 def verify_item_flow(*, model: FactoryModel | None = None) -> dict:
-    """Check that every delivered item travelled a complete wired route.
+    """Check that every delivered item travelled a complete wired route, and
+    summarize where the items went.
 
     For each item that reached a sink in the last run, replays its captured
-    trail from `model.item_paths` and checks it against the wiring with `_first_bad_step`. 
+    trail from `model.item_paths` and checks it against the wiring with `_first_bad_step`.
     A clean trail counts toward `passed`; one that disagrees with the wiring is
     reported in `improper` with the position and reason of its first fault.
 
@@ -214,6 +368,15 @@ def verify_item_flow(*, model: FactoryModel | None = None) -> dict:
           "all_proper": bool,   # passed == delivered
           "improper": [         # only the failures carry detail
             {"item": ..., "trail": [...], "at": int, "reason": str}, ...
+          ],
+          "routes": [           # delivered items per part type and route
+            {"part_type": str | None, "route": [node ids], "end": str,
+             "scrap": bool, "items": int, "share": float}, ...
+          ],
+          "repeat_visits": [{"node": str, "items": int, "max_visits": int}, ...],
+          "not_delivered": [{"place": str, "items": int}, ...],  # node or edge holding them
+          "warnings": [         # unvisited_station, type_not_delivered
+            {"check": str, "component": str, "message": str}, ...
           ],
         }
     """
@@ -232,18 +395,22 @@ def verify_item_flow(*, model: FactoryModel | None = None) -> dict:
         if type(node).__name__ == _SINK_TYPE
     }
 
-    delivered = 0
+    trails: dict[str, list[str]] = {}
+    arrived: dict[str, list[str]] = {}
     passed = 0
     improper: list[dict] = []
 
     for item_id, raw_trail in model.item_paths.items():
         trail = _resolve_head(list(raw_trail), model)
+        if not trail:
+            continue
+        trails[item_id] = trail
 
         # An item that never reached a sink is still in flight or discarded —
         # verify_conservation's concern, not a path fault here.
-        if not trail or trail[-1] not in sink_ids:
+        if trail[-1] not in sink_ids:
             continue
-        delivered += 1
+        arrived[item_id] = trail
 
         fault = _first_bad_step(trail, model, adjacency)
         if fault is None:
@@ -257,10 +424,19 @@ def verify_item_flow(*, model: FactoryModel | None = None) -> dict:
                 "reason": reason,
             })
 
+    stuck = _waiting_places(
+        model, [item_id for item_id in trails if item_id not in arrived], trails
+    )
     return {
         "now": model.env.now,
-        "delivered": delivered,
+        "delivered": len(arrived),
         "passed": passed,
-        "all_proper": passed == delivered,
+        "all_proper": passed == len(arrived),
         "improper": improper,
+        "routes": _routes(model, arrived),
+        "repeat_visits": _repeat_visits(model, arrived),
+        "not_delivered": [
+            {"place": place, "items": n} for place, n in stuck.most_common()
+        ],
+        "warnings": _flow_warnings(model, trails, arrived),
     }

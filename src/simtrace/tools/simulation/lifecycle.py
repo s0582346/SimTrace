@@ -108,7 +108,13 @@ def run_simulation(
             settle = getattr(node, name, None)
             if settle is not None:
                 settle(model.env.now)
-    model.item_paths.update(build_item_paths(model.events, model.edges.keys()))
+    combiners = [
+        node_id for node_id, node in model.nodes.items()
+        if type(node).__name__ == "Combiner"
+    ]
+    model.item_paths.update(
+        build_item_paths(model.events, model.edges.keys(), combiners)
+    )
 
     nodes = {
         node_id: getattr(node, "stats", None)
