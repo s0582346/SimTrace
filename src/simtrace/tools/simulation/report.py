@@ -48,6 +48,10 @@ details.findings.fail summary { color: #a12828; }
 details.findings li { margin: 8px 0; }
 details.findings p.check { margin: 12px 0 6px; }
 details.findings table { margin-bottom: 8px; }
+details.tool { margin: 16px 0; border: 1px solid #ccc; border-radius: 8px; padding: 8px 14px; }
+details.tool > summary { cursor: pointer; font-size: 1.15rem; font-weight: 600; }
+details.tool > summary .status { font-size: 0.85rem; margin-left: 8px; }
+details.tool h3 { margin: 14px 0 6px; font-size: 1rem; }
 ul.settings { color: #222; margin: 0 0 12px; padding-left: 20px; }
 """
 
@@ -421,9 +425,19 @@ def _findings_list(title: str, findings: list[dict], kind: str) -> str:
     )
 
 
+def _tool_section(tool: str, status: str, summary: str, body: str) -> str:
+    """One validation tool as a block that opens on click; the status shows
+    while it is closed."""
+    return (
+        f"<details class='tool'><summary><code>{tool}</code>"
+        f"<span class='status {status}'>{escape(summary)}</span></summary>"
+        f"{body}</details>"
+    )
+
+
 def _validate_model_section(model: FactoryModel) -> str:
-    """validate_model on the model as it was run: a summary line, then the
-    errors and warnings as lists that open on click."""
+    """validate_model on the model as it was run: errors and warnings as lists
+    that open on click."""
     # Imported here: the validation package imports the simulation package.
     from simtrace.tools.validation.model_check import validate_model
 
@@ -436,12 +450,74 @@ def _validate_model_section(model: FactoryModel) -> str:
     else:
         status = "pass"
     summary = f"{_count(len(errors), 'error')}, {_count(len(warnings), 'warning')}"
-    return (
-        "<h2><code>validate_model</code></h2>"
-        f"<p><span class='status {status}'>{escape(summary)}</span></p>"
-        + _findings_list("Errors", errors, "fail")
+    body = (
+        _findings_list("Errors", errors, "fail")
         + _findings_list("Warnings", warnings, "warn")
-    )
+    ) or "<p>No findings.</p>"
+    return _tool_section("validate_model", status, summary, body)
+
+
+_IMPROPER_SHOWN = 20
+
+
+def _item_flow_section(model: FactoryModel, single_run: bool) -> str:
+    """verify_item_flow on the last run: wiring check, routes per part type,
+    repeat visits and items not delivered."""
+    from simtrace.tools.validation.item_flow import verify_item_flow
+
+    if not single_run:
+        return _tool_section(
+            "verify_item_flow", "warn", "not checked",
+            "<p>run_replications keeps no item trails. Use run_simulation.</p>",
+        )
+    result = verify_item_flow(model=model)
+    improper, warnings = result["improper"], result["warnings"]
+    status = "fail" if improper else "warn" if warnings else "pass"
+    summary = f"{result['passed']} of {result['delivered']} delivered items on a wired route"
+    if warnings:
+        summary += f", {_count(len(warnings), 'warning')}"
+
+    parts = [_findings_list("Warnings", warnings, "warn")]
+    if improper:
+        items = "".join(
+            f"<li><code>{escape(f['item'])}</code> at position {f['at']}"
+            f"<br>{escape(f['reason'])}</li>"
+            for f in improper[:_IMPROPER_SHOWN]
+        )
+        more = len(improper) - _IMPROPER_SHOWN
+        parts.append(
+            f"<details class='findings fail'><summary>Improper ({len(improper)})</summary>"
+            f"<ul>{items}</ul>"
+            + (f"<p>and {more} more.</p>" if more > 0 else "")
+            + "</details>"
+        )
+    if result["routes"]:
+        rows = [
+            f"<tr><td>{escape(r['part_type'] or '–')}</td>"
+            f"<td>{escape(' → '.join(r['route']))}</td>"
+            f"<td>{'scrap' if r['scrap'] else 'good'}</td>"
+            f"<td class='num'>{r['items']}</td>"
+            f"<td class='num'>{100 * r['share']:.0f}%</td></tr>"
+            for r in result["routes"]
+        ]
+        parts.append("<h3>Routes</h3>" + _table(
+            ["Part type", "Route", "End", "Items", "Share [%]"], rows, numeric_from=3))
+    if result["repeat_visits"]:
+        rows = [
+            f"<tr><td><code>{escape(r['node'])}</code></td>"
+            f"<td class='num'>{r['items']}</td><td class='num'>{r['max_visits']}</td></tr>"
+            for r in result["repeat_visits"]
+        ]
+        parts.append("<h3>Repeat visits</h3>" + _table(
+            ["Station", "Items", "Most visits"], rows))
+    if result["not_delivered"]:
+        rows = [
+            f"<tr><td><code>{escape(r['place'])}</code></td>"
+            f"<td class='num'>{r['items']}</td></tr>"
+            for r in result["not_delivered"]
+        ]
+        parts.append("<h3>Not delivered at run end</h3>" + _table(["Place", "Items"], rows))
+    return _tool_section("verify_item_flow", status, summary, "".join(parts))
 
 
 def render_report(
@@ -462,7 +538,8 @@ def render_report(
             _buffers(model, views),
             _part_types(views),
         ])),
-        ("Validation", _validate_model_section(model)),
+        ("Validation", _validate_model_section(model)
+         + _item_flow_section(model, requested is None)),
     ]
     body = _settings_line(len(views), until, seed, seed_base, requested) + _tabbed(tabs)
     title = "Single-Run Report" if requested is None else "Replication Report"

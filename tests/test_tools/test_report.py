@@ -201,9 +201,10 @@ def test_validation_tab_shows_validate_model_summary(tmp_path):
     target = tmp_path / "run.html"
     _quiet(run_simulation, 100, seed=1, model=_line(), report_path=str(target))
     tab = _validation_tab(target.read_text(encoding="utf-8"))
-    assert "<h2><code>validate_model</code></h2>" in tab
-    assert "<span class='status pass'>0 errors, 0 warnings</span>" in tab
-    assert "<details" not in tab
+    assert ("<details class='tool'><summary><code>validate_model</code>"
+            "<span class='status pass'>0 errors, 0 warnings</span></summary>") in tab
+    assert "<p>No findings.</p>" in tab
+    assert "<details class='findings" not in tab.split("verify_item_flow")[0]
 
 
 def test_validation_tab_lists_warnings_in_a_toggle(tmp_path):
@@ -233,3 +234,23 @@ def test_overload_warning_is_a_table(tmp_path):
     assert "<th>Machine</th><th class='num'>Effective process time [min]</th>" in tab
     assert "<td><code>m</code></td><td class='num'>5.00</td><td class='num'>3.00</td><td class='num'>167%</td>" in tab
     assert "<li>" not in tab
+
+
+def test_validation_tab_has_item_flow_toggle(tmp_path):
+    target = tmp_path / "run.html"
+    _quiet(run_simulation, 100, seed=1, model=_line(part_type="shaft"),
+           report_path=str(target))
+    tab = _validation_tab(target.read_text(encoding="utf-8"))
+    flow = tab[tab.index("<code>verify_item_flow</code>"):]
+    assert "<span class='status pass'>" in flow and "delivered items on a wired route" in flow
+    assert "<h3>Routes</h3>" in flow
+    assert "<td>shaft</td><td>src → m → join → snk</td><td>good</td>" in flow
+    assert "<td class='num'>100%</td>" in flow
+
+
+def test_replication_report_says_item_flow_was_not_checked(tmp_path):
+    target = tmp_path / "reps.html"
+    _quiet(run_replications, 50, 2, model=_line(), n_jobs=1,
+           report_path=str(target))
+    tab = _validation_tab(target.read_text(encoding="utf-8"))
+    assert "<code>verify_item_flow</code><span class='status warn'>not checked</span>" in tab
