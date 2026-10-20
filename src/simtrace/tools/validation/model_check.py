@@ -16,6 +16,7 @@ Examples:
   - a node that throws items away when its out-edge is full (WIP)
   - a conveyor set up for a different item length than the items on it
   - a splitter with no pallets coming from upstream
+  - an unpacking splitter with several out-edges and no pallet_edge
   - an out-edge of a routing machine that no route uses
   - a loop, such as rework, that can get stuck when all its buffers are full
 
@@ -519,6 +520,67 @@ def _check_pallets(
                 )
             )
 
+    return findings
+
+
+def _check_pallet_exit(model: FactoryModel, node_types: dict[str, str]) -> list[dict]:
+    """Where an unpacking Splitter sends the empty pallet.
+
+    Without `pallet_edge` the empty pallet takes the first out-edge with
+    space, like the parts. With two or more out-edges that is a warning. A
+    `pallet_edge` that is not one of the splitter's out-edges is an error:
+    the run raises.
+
+    Example:
+        unpack -> b_parts -> ship, unpack -> b_pallets -> returns, no
+        pallet_edge: warning, the pallets go to ship through b_parts.
+    """
+    findings: list[dict] = []
+    modes = _spec_values(model, "create_splitter", "mode")
+    pallet_edges = _spec_values(model, "create_splitter", "pallet_edge")
+    for node_id, node in model.nodes.items():
+        if node_types[node_id] != _SPLITTER_TYPE or modes.get(node_id, "UNPACK") != "UNPACK":
+            continue
+        out_ids = [getattr(edge, "id", "?") for edge in _edge_list(node, "out_edges")]
+        pallet_edge = pallet_edges.get(node_id)
+        if pallet_edge is None:
+            if len(out_ids) >= 2:
+                findings.append(
+                    _finding(
+                        "pallet_exit",
+                        _WARNING,
+                        node_id,
+                        f"Splitter '{node_id}' has {len(out_ids)} out-edges "
+                        f"({', '.join(out_ids)}) but no pallet_edge. The empty "
+                        f"pallet goes to the first one with space, mostly "
+                        f"'{out_ids[0]}', together with the parts. Set "
+                        "pallet_edge to the edge the empty pallet should leave by.",
+                    )
+                )
+        elif pallet_edge not in out_ids:
+            findings.append(
+                _finding(
+                    "pallet_exit",
+                    _ERROR,
+                    node_id,
+                    f"Splitter '{node_id}' has pallet_edge '{pallet_edge}', "
+                    "which is not one of its out-edges"
+                    + (f" ({', '.join(out_ids)})" if out_ids else "")
+                    + ". The run raises.",
+                )
+            )
+        elif len(out_ids) < 2:
+            findings.append(
+                _finding(
+                    "pallet_exit",
+                    _ERROR,
+                    node_id,
+                    f"Splitter '{node_id}' sends the empty pallet to "
+                    f"'{pallet_edge}', its only out-edge, so the parts have "
+                    "none left. The run raises. Connect a second out-edge for "
+                    "the parts.",
+                )
+            )
     return findings
 
 
@@ -1241,6 +1303,7 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
     findings += _check_silent_discard(model)
     findings += _check_conveyor_item_length(model, node_types, upstream)
     findings += _check_pallets(model, node_types, upstream)
+    findings += _check_pallet_exit(model, node_types)
     findings += _check_routes(model, node_types)
     findings += _check_shares(model)
     findings += _check_loops(model, downstream)

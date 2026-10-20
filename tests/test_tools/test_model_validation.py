@@ -617,3 +617,47 @@ def test_rework_loop_is_warned_about_once(model):
 
 def test_line_without_a_loop_gets_no_loop_warning(line):
     assert "loop_jam" not in checks(validate_model(model=line)["warnings"])
+
+
+def _unpacking_line(model, pallet_edge=None, second_exit=True):
+    """pallets + parts -> pack -> unpack -> b_parts -> ship (+ b_back -> returns)."""
+    create_source("pallets", flow_item_type="pallet", blocking=True, model=model)
+    create_source("parts", blocking=True, model=model)
+    create_combiner("pack", target_quantity_of_each_item=[1, 2], model=model)
+    create_splitter("unpack", pallet_edge=pallet_edge, model=model)
+    create_sink("ship", model=model)
+    edges = [("b_pal", "pallets", "pack"), ("b_in", "parts", "pack"),
+             ("b_packed", "pack", "unpack"), ("b_parts", "unpack", "ship")]
+    if second_exit:
+        create_sink("returns", model=model)
+        edges.append(("b_back", "unpack", "returns"))
+    for edge_id, src, dest in edges:
+        create_buffer(edge_id, capacity=2, model=model)
+        connect(edge_id, src, dest, model=model)
+    return model
+
+
+def test_two_exits_without_pallet_edge_are_warned_about(model):
+    report = validate_model(model=_unpacking_line(model))
+    assert components(report["warnings"], "pallet_exit") == {"unpack"}
+
+
+def test_pallet_edge_on_an_out_edge_is_quiet(model):
+    report = validate_model(model=_unpacking_line(model, pallet_edge="b_back"))
+    assert components(report["warnings"] + report["errors"], "pallet_exit") == set()
+
+
+def test_one_exit_without_pallet_edge_is_quiet(model):
+    report = validate_model(model=_unpacking_line(model, second_exit=False))
+    assert components(report["warnings"] + report["errors"], "pallet_exit") == set()
+
+
+def test_pallet_edge_that_is_not_an_out_edge_is_an_error(model):
+    report = validate_model(model=_unpacking_line(model, pallet_edge="b_in"))
+    assert components(report["errors"], "pallet_exit") == {"unpack"}
+
+
+def test_pallet_edge_as_the_only_exit_is_an_error(model):
+    report = validate_model(model=_unpacking_line(model, pallet_edge="b_parts",
+                                                  second_exit=False))
+    assert components(report["errors"], "pallet_exit") == {"unpack"}
