@@ -16,7 +16,6 @@ Examples:
   - a node that throws items away when its out-edge is full (WIP)
   - a conveyor set up for a different item length than the items on it
   - a splitter with no pallets coming from upstream
-  - parallel branches that pass different stations
   - an out-edge of a routing machine that no route uses
   - a loop, such as rework, that can get stuck when all its buffers are full
 
@@ -26,10 +25,13 @@ model that has never run and on one that has.
 
 from __future__ import annotations
 
+import math
+
 from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
 from simtrace.tools.builders.part_types import make_payload
 from simtrace.tools.builders.routing import FALLBACK, pick_route, target_edge_ids
+from simtrace.tools.distributions import spec_parts
 
 _SOURCE_TYPE = "Source"
 _SINK_TYPE = "Sink"
@@ -49,14 +51,26 @@ _ERROR = "error"
 _WARNING = "warning"
 
 
-def _finding(check: str, severity: str, component: str | None, message: str) -> dict:
-    """One entry in the report: what failed, where, and in plain words."""
-    return {
+def _finding(
+    check: str,
+    severity: str,
+    component: str | None,
+    message: str,
+    details: dict | None = None,
+) -> dict:
+    """One entry in the report: what failed, where, and in plain words.
+
+    `details` holds the numbers behind the message, for checks that compute any.
+    """
+    finding = {
         "check": check,
         "severity": severity,
         "component": component,
         "message": message,
     }
+    if details is not None:
+        finding["details"] = details
+    return finding
 
 
 def _edge_list(node: object, attr: str) -> list:
@@ -373,70 +387,6 @@ def _check_silent_discard(model: FactoryModel) -> list[dict]:
     return findings
 
 
-def _check_branch_symmetry(
-    model: FactoryModel, node_types: dict[str, str], downstream: dict[str, set]
-) -> list[dict]:
-    """Branches out of one node must reach the same nodes beyond their first.
-
-    A node whose out-edges lead to two or more distinct nodes spreads its
-    output over them. The set of nodes reachable beyond each of those must be
-    the same; where it is not, items taking one branch pass a node that items
-    taking another do not.
-
-    The first node of each branch is left out of the comparison: parallel
-    stations are distinct nodes by construction.
-
-    A Splitter is exempt. It sends a pallet's contents down one out-edge and
-    the empty container down another, so its branches reach different nodes.
-    A routing machine is exempt too: it sends each item down the branch its
-    rule names (by attribute or by share), so its branches lead to different
-    stations on purpose.
-
-    A branch that skips a node other than the bottleneck leaves the throughput
-    unchanged, so no rate calculation reports it.
-    """
-    findings: list[dict] = []
-
-    for node_id, successors in downstream.items():
-        if len(successors) < 2 or node_types.get(node_id) == _SPLITTER_TYPE:
-            continue
-        node = model.nodes.get(node_id)
-        if getattr(node, "routes", None) is not None:
-            continue
-        if getattr(node, "route_shares", None) is not None:
-            continue
-
-        beyond = {
-            successor: _walk(list(downstream.get(successor, ())), downstream)
-            for successor in successors
-        }
-        shared = set.intersection(*beyond.values())
-        if all(reach == shared for reach in beyond.values()):
-            continue
-
-        described = "; ".join(
-            f"via '{successor}' to "
-            + (", ".join(f"'{n}'" for n in sorted(beyond[successor])) or "nothing")
-            for successor in sorted(successors)
-        )
-        findings.append(
-            _finding(
-                "branch_symmetry",
-                _WARNING,
-                node_id,
-                f"{node_types.get(node_id, 'Node')} '{node_id}' spreads its "
-                f"output over "
-                + ", ".join(f"'{s}'" for s in sorted(successors))
-                + ", but the branches do not lead on over the same stations: "
-                f"{described}. Parallel branches are meant to be "
-                "interchangeable, so items taking one of them skip a station "
-                "the others pass through. The throughput does not show this.",
-            )
-        )
-
-    return findings
-
-
 def _check_conveyor_item_length(
     model: FactoryModel, node_types: dict[str, str], upstream: dict[str, set]
 ) -> list[dict]:
@@ -589,55 +539,66 @@ def _routed_arrivals(
     for source_id, node_type in node_types.items():
         if node_type != _SOURCE_TYPE:
             continue
-        # The payload every item of this Source carries; {} for untyped items.
-        source = model.nodes[source_id]
-        payload = (
-            make_payload(source)
-            if getattr(source, "part_type", None) is not None
-            else {}
-        )
-
-        # Walk forward from the Source, visiting each node once.
-        seen = {source_id}
-        queue = [source_id]
-        while queue:
-            node_id = queue.pop()
-            node = model.nodes[node_id]
-            out_edges = _edge_list(node, "out_edges")
-
-            # Routing machine: note that this Source's items arrive here, then
-            # keep only the edges the rule picks for them. No match keeps none.
-            routes = getattr(node, "routes", None)
-            if routes is not None:
+        payload = _payload(model.nodes[source_id])
+        # Note at each routing machine that this Source's items arrive there.
+        for node_id in _follow(model, node_types, source_id):
+            if getattr(model.nodes[node_id], "routes", None) is not None:
                 arrivals.setdefault(node_id, []).append((source_id, payload))
-                target = pick_route(routes, payload.get(node.route_by))
-                edge_ids = target_edge_ids(target)
-                out_edges = [e for e in out_edges if getattr(e, "id", None) in edge_ids]
-
-            # Share machine: parts go on along every edge with a share above 0.
-            shares = getattr(node, "route_shares", None)
-            if shares is not None:
-                out_edges = [
-                    e for e in out_edges if shares.get(getattr(e, "id", None), 0) > 0
-                ]
-
-            for edge in out_edges:
-                # Skip half-wired edges and nodes already visited.
-                _, dest_id = _endpoints(edge)
-                if dest_id is None or dest_id in seen:
-                    continue
-                # A Combiner packs items from its other in-edges into the
-                # pallet from its first one; packed items are not followed.
-                dest = model.nodes[dest_id]
-                if (
-                    node_types.get(dest_id) == _COMBINER_TYPE
-                    and _edge_list(dest, "in_edges")[:1] != [edge]
-                ):
-                    continue
-                seen.add(dest_id)
-                queue.append(dest_id)
 
     return arrivals
+
+
+def _payload(source: object) -> dict:
+    """What every item of a Source carries; {} for untyped items."""
+    if getattr(source, "part_type", None) is None:
+        return {}
+    return make_payload(source)
+
+
+def _next_edges(node: object, payload: dict) -> list:
+    """The out-edges a part with `payload` can leave `node` by.
+
+    A routing machine keeps only the edges its rule picks for the part, none
+    when nothing matches. A share machine keeps every edge with a share above 0.
+    """
+    out_edges = _edge_list(node, "out_edges")
+    routes = getattr(node, "routes", None)
+    if routes is not None:
+        target = pick_route(routes, payload.get(node.route_by))
+        edge_ids = target_edge_ids(target)
+        out_edges = [e for e in out_edges if getattr(e, "id", None) in edge_ids]
+    shares = getattr(node, "route_shares", None)
+    if shares is not None:
+        out_edges = [e for e in out_edges if shares.get(getattr(e, "id", None), 0) > 0]
+    return out_edges
+
+
+def _follow(model: FactoryModel, node_types: dict[str, str], source_id: str) -> set:
+    """Every node a part of `source_id` can reach, the Source included.
+
+    Parts that a Combiner packs into a pallet are not followed any further.
+    """
+    payload = _payload(model.nodes[source_id])
+    seen = {source_id}
+    queue = [source_id]
+    while queue:
+        node = model.nodes[queue.pop()]
+        for edge in _next_edges(node, payload):
+            # Skip half-wired edges and nodes already visited.
+            _, dest_id = _endpoints(edge)
+            if dest_id is None or dest_id in seen:
+                continue
+            # A Combiner packs items from its other in-edges into the pallet
+            # from its first one; packed items are not followed.
+            dest = model.nodes[dest_id]
+            if (
+                node_types.get(dest_id) == _COMBINER_TYPE
+                and _edge_list(dest, "in_edges")[:1] != [edge]
+            ):
+                continue
+            seen.add(dest_id)
+            queue.append(dest_id)
+    return seen
 
 
 def _check_routes(model: FactoryModel, node_types: dict[str, str]) -> list[dict]:
@@ -821,6 +782,389 @@ def _check_loops(model: FactoryModel, downstream: dict[str, set]) -> list[dict]:
     return findings
 
 
+_MACHINE_TYPE = "Machine"
+_BUFFER_TYPES = ("Buffer", "Fleet")
+_NORMAL_NAMES = ("normal", "gauss")
+# A normal draw below 0 is clamped to 0. Above this chance it shifts the mean.
+_NEGATIVE_SHARE = 0.01
+_LOW_AVAILABILITY = 0.5
+
+
+def _mean(value: object) -> float | None:
+    """Mean of a constant or a distribution string; None if it is neither."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    parts = spec_parts(value)
+    if parts is None:
+        return None
+    name, a, b = parts
+    if name == "uniform":
+        return (a + b) / 2
+    return a
+
+
+def _working_share(calendar: object | None) -> float:
+    """Share of each cycle inside the calendar's windows; 1 without a calendar."""
+    if calendar is None:
+        return 1.0
+    return calendar.working_time_between(0, calendar.cycle) / calendar.cycle
+
+
+def _availability(model: FactoryModel, node_id: str) -> float:
+    """Mean time to failure / (that + mean repair time); 1 without breakdowns."""
+    to_failure = _mean(_spec_values(model, "create_machine", "time_to_failure").get(node_id))
+    repair = _mean(_spec_values(model, "create_machine", "repair_time").get(node_id))
+    if not to_failure or repair is None:
+        return 1.0
+    return to_failure / (to_failure + repair)
+
+
+def _finish_rate(model: FactoryModel, node_id: str) -> float:
+    """Parts a machine can finish per time unit, counting its workers, its
+    breakdowns and its working hours. Infinite for a machine that takes no time."""
+    delay = _mean(_spec_values(model, "create_machine", "processing_delay").get(node_id))
+    if not delay:
+        return math.inf
+    workers = _spec_values(model, "create_machine", "work_capacity").get(node_id) or 1
+    node = model.nodes[node_id]
+    return (
+        workers / delay
+        * _availability(model, node_id)
+        * _working_share(getattr(node, "calendar", None))
+    )
+
+
+def _flows(model: FactoryModel, node_types: dict[str, str]) -> tuple[dict, dict]:
+    """Mean parts per time unit into every node and through every edge.
+
+    Each Source's parts are carried down the line separately, so a routing
+    machine can send them by their own attributes. A share machine splits by
+    its shares; any other node splits evenly over its out-edges. A machine
+    passes on at most what it can finish. Splitters and Combiners change the
+    part count, so nothing is carried past them, and neither into a loop.
+
+    Returns (node id -> rate in, edge id -> rate through).
+    """
+    inflow: dict[str, dict[str, float]] = {node_id: {} for node_id in model.nodes}
+    through: dict[str, float] = {}
+
+    # Visit the nodes in flow order; nodes in a loop are never ready.
+    waiting = {
+        node_id: len({_endpoints(e)[0] for e in _edge_list(node, "in_edges")} - {None})
+        for node_id, node in model.nodes.items()
+    }
+    ready = [node_id for node_id, count in waiting.items() if count == 0]
+    while ready:
+        node_id = ready.pop()
+        node = model.nodes[node_id]
+        node_type = node_types.get(node_id)
+
+        if node_type == _SOURCE_TYPE:
+            gap = _mean(_spec_values(model, "create_source", "inter_arrival_time").get(node_id))
+            share = _working_share(getattr(node, "calendar", None))
+            out = {node_id: share / gap} if gap else {}
+        elif node_type == _MACHINE_TYPE:
+            total = sum(inflow[node_id].values())
+            limit = _finish_rate(model, node_id)
+            factor = min(1.0, limit / total) if total else 1.0
+            out = {source: rate * factor for source, rate in inflow[node_id].items()}
+        else:
+            out = {}
+
+        shares = getattr(node, "route_shares", None)
+        for source_id, rate in out.items():
+            edges = _next_edges(node, _payload(model.nodes[source_id]))
+            for edge in edges:
+                edge_id = getattr(edge, "id", None)
+                part = rate * shares[edge_id] if shares is not None else rate / len(edges)
+                through[edge_id] = through.get(edge_id, 0.0) + part
+                _, dest_id = _endpoints(edge)
+                if dest_id is not None:
+                    inflow[dest_id][source_id] = inflow[dest_id].get(source_id, 0.0) + part
+
+        for dest_id in {_endpoints(e)[1] for e in _edge_list(node, "out_edges")} - {None}:
+            waiting[dest_id] -= 1
+            if waiting[dest_id] == 0:
+                ready.append(dest_id)
+
+    return {node_id: sum(rates.values()) for node_id, rates in inflow.items()}, through
+
+
+def _every(rate: float) -> str:
+    """A rate as 'one part every N time units'."""
+    return f"{1 / rate:.3g}"
+
+
+def _check_overload(
+    model: FactoryModel, node_types: dict[str, str], inflow: dict[str, float]
+) -> list[dict]:
+    """Warn when a machine gets more parts on average than it can finish.
+
+    The estimate uses mean times only. Effective process time is the process
+    time divided by the number of workers, the availability and the working
+    share. Utilization is effective process time / interarrival time. At 100%
+    or more parts pile up in front of the machine and the stations before it
+    are held back, or a non-blocking node throws parts away.
+    """
+    findings: list[dict] = []
+    for node_id, node_type in node_types.items():
+        if node_type != _MACHINE_TYPE or not inflow.get(node_id):
+            continue
+        limit = _finish_rate(model, node_id)
+        load = inflow[node_id] / limit
+        if load < 1:
+            continue
+        findings.append(
+            _finding(
+                "station_overload",
+                _WARNING,
+                node_id,
+                f"Machine '{node_id}' gets more parts than it can finish "
+                f"(utilization {load:.0%}).",
+                {
+                    "effective_process_time": 1 / limit,
+                    "interarrival_time": 1 / inflow[node_id],
+                    "utilization": load,
+                },
+            )
+        )
+    return findings
+
+
+def _check_buffer_delay(model: FactoryModel, through: dict[str, float]) -> list[dict]:
+    """Warn when a buffer with a delay has too few places for its flow.
+
+    Each part stays for the delay, so on average flow × delay places are taken.
+    The flow is taken over the working hours of the node in front of it.
+    """
+    findings: list[dict] = []
+    for edge_id, edge in model.edges.items():
+        if type(edge).__name__ not in _BUFFER_TYPES or not through.get(edge_id):
+            continue
+        op = "create_buffer" if type(edge).__name__ == "Buffer" else "create_fleet"
+        delay = _mean(_spec_values(model, op, "delay").get(edge_id))
+        if not delay:
+            continue
+        src_id, _ = _endpoints(edge)
+        share = _working_share(getattr(model.nodes.get(src_id), "calendar", None))
+        needed = through[edge_id] / share * delay
+        capacity = getattr(edge, "capacity", None)
+        if capacity is None or needed < capacity:
+            continue
+        findings.append(
+            _finding(
+                "buffer_delay_capacity",
+                _WARNING,
+                edge_id,
+                f"'{edge_id}' keeps each part about {delay:g} time units and gets "
+                f"one about every {_every(through[edge_id] / share)}, so it needs "
+                f"about {needed:.1f} places on average but has {capacity}. It "
+                f"fills up and holds back '{src_id}'.",
+            )
+        )
+    return findings
+
+
+def _windows_in(calendar: object, period: float) -> list[tuple[float, float]]:
+    """The calendar's windows repeated over [0, period)."""
+    repeats = round(period / calendar.cycle)
+    return [
+        (start + k * calendar.cycle, end + k * calendar.cycle)
+        for k in range(repeats)
+        for start, end in calendar.windows
+    ]
+
+
+def _working(windows: list[tuple[float, float]] | None, moment: float) -> bool:
+    return windows is None or any(start <= moment < end for start, end in windows)
+
+
+def _time_off_while_on(on: object | None, off: object) -> float:
+    """Time per common period in which `on` works and `off` does not.
+
+    `on` is None for no calendar, so it always works. Returns 0 when the two
+    cycles have no common period of whole numbers.
+    """
+    cycles = [off.cycle] + ([on.cycle] if on is not None else [])
+    if not all(float(c).is_integer() for c in cycles):
+        return 0.0
+    period = math.lcm(*(int(c) for c in cycles))
+    on_windows = _windows_in(on, period) if on is not None else None
+    off_windows = _windows_in(off, period)
+    points = sorted(
+        {0.0, float(period)}
+        | {p for window in (on_windows or []) + off_windows for p in window}
+    )
+    return sum(
+        end - start
+        for start, end in zip(points, points[1:])
+        if _working(on_windows, (start + end) / 2)
+        and not _working(off_windows, (start + end) / 2)
+    )
+
+
+def _check_calendar_mismatch(model: FactoryModel, node_types: dict[str, str]) -> list[dict]:
+    """Warn when a Source delivers while the machine right after it is off.
+
+    The buffer between them fills up. Then a blocking Source waits and a
+    non-blocking one throws its parts away.
+    """
+    findings: list[dict] = []
+    for source_id, node_type in node_types.items():
+        if node_type != _SOURCE_TYPE:
+            continue
+        source = model.nodes[source_id]
+        for edge in _edge_list(source, "out_edges"):
+            _, dest_id = _endpoints(edge)
+            dest = model.nodes.get(dest_id)
+            station_calendar = getattr(dest, "calendar", None)
+            if station_calendar is None:
+                continue
+            gap = _time_off_while_on(getattr(source, "calendar", None), station_calendar)
+            if gap <= 0:
+                continue
+            after = (
+                f"'{source_id}' waits"
+                if getattr(source, "blocking", None) is not False
+                else f"'{source_id}' throws its parts away"
+            )
+            findings.append(
+                _finding(
+                    "calendar_mismatch",
+                    _WARNING,
+                    source_id,
+                    f"Source '{source_id}' delivers for about {gap:g} time units "
+                    f"per cycle while '{dest_id}' is off shift. "
+                    f"'{getattr(edge, 'id', '?')}' fills up and then {after}.",
+                )
+            )
+    return findings
+
+
+def _check_unused_calendars(model: FactoryModel) -> list[dict]:
+    """Warn about a calendar that no Source or machine follows."""
+    used = {id(getattr(node, "calendar", None)) for node in model.nodes.values()}
+    return [
+        _finding(
+            "unused_calendar",
+            _WARNING,
+            calendar_id,
+            f"Calendar '{calendar_id}' is not used by any Source or machine.",
+        )
+        for calendar_id, calendar in model.calendars.items()
+        if id(calendar) not in used
+    ]
+
+
+def _check_availability(model: FactoryModel) -> list[dict]:
+    """Warn when a machine is broken down more often than it works."""
+    findings: list[dict] = []
+    for node_id in _spec_values(model, "create_machine", "time_to_failure"):
+        availability = _availability(model, node_id)
+        if availability >= _LOW_AVAILABILITY:
+            continue
+        findings.append(
+            _finding(
+                "low_availability",
+                _WARNING,
+                node_id,
+                f"Machine '{node_id}' is in repair {1 - availability:.0%} of its "
+                "working time: the mean repair time is longer than the mean "
+                "time to failure. Check whether the two were swapped or are "
+                "in different units.",
+            )
+        )
+    return findings
+
+
+def _check_normal_clamping(model: FactoryModel) -> list[dict]:
+    """Warn about a normal distribution that often draws below 0.
+
+    Such draws are set to 0, which raises the real mean above the given one.
+    """
+    findings: list[dict] = []
+    for step in model.spec:
+        component_id = step["kwargs"].get("id")
+        for field, value in step["kwargs"].items():
+            parts = spec_parts(value)
+            if parts is None or parts[0] not in _NORMAL_NAMES or not parts[2]:
+                continue
+            _, mean, deviation = parts
+            negative = 0.5 * (1 + math.erf(-mean / (deviation * math.sqrt(2))))
+            if negative <= _NEGATIVE_SHARE:
+                continue
+            findings.append(
+                _finding(
+                    "normal_clamping",
+                    _WARNING,
+                    component_id,
+                    f"'{component_id}' has {field}={value!r}: about "
+                    f"{negative:.0%} of the draws are below 0 and are set to 0, "
+                    "so the real mean is higher than the given one.",
+                )
+            )
+    return findings
+
+
+def _check_no_effect(model: FactoryModel) -> list[dict]:
+    """Warn about an edge selection that has nothing to choose from.
+
+    ROUND_ROBIN or RANDOM over a single edge acts like no selection at all.
+    This usually means an edge is missing.
+    """
+    findings: list[dict] = []
+    for op in ("create_source", "create_machine", "create_splitter", "create_combiner"):
+        for attr, side in (("out_edge_selection", "out"), ("in_edge_selection", "in")):
+            for node_id, selection in _spec_values(model, op, attr).items():
+                if selection in (None, "FIRST_AVAILABLE") or node_id not in model.nodes:
+                    continue
+                edges = _edge_list(model.nodes[node_id], f"{side}_edges")
+                if len(edges) > 1:
+                    continue
+                findings.append(
+                    _finding(
+                        "no_effect_setting",
+                        _WARNING,
+                        node_id,
+                        f"'{node_id}' has {attr}={selection!r} but only "
+                        f"{len(edges)} {side}-edge, so there is nothing to "
+                        "choose between. Is an edge missing?",
+                    )
+                )
+    return findings
+
+
+def _check_scrap_only(model: FactoryModel, node_types: dict[str, str]) -> list[dict]:
+    """Warn when every Sink a Source's parts can reach is a scrap Sink."""
+    findings: list[dict] = []
+    for source_id, node_type in node_types.items():
+        if node_type != _SOURCE_TYPE:
+            continue
+        sinks = [
+            node_id
+            for node_id in _follow(model, node_types, source_id)
+            if node_types.get(node_id) == _SINK_TYPE
+        ]
+        if not sinks or not all(getattr(model.nodes[s], "scrap", False) for s in sinks):
+            continue
+        part_type = getattr(model.nodes[source_id], "part_type", None)
+        parts = f"'{part_type}' parts" if part_type else "Parts"
+        findings.append(
+            _finding(
+                "part_type_dead_end",
+                _WARNING,
+                source_id,
+                f"{parts} from Source '{source_id}' can only reach the scrap "
+                "Sink" + ("s " if len(sinks) > 1 else " ")
+                + ", ".join(f"'{s}'" for s in sorted(sinks))
+                + ", so none of them is ever completed.",
+            )
+        )
+    return findings
+
+
 def validate_model(*, model: FactoryModel | None = None) -> dict:
     """Check the assembled graph before it is run.
 
@@ -840,13 +1184,25 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
 
     Warnings:
         silent_discard        a non-blocking node drops items at a full out-edge
-        branch_symmetry       parallel branches lead on over different stations
         conveyor_item_length  a belt's item length disagrees with its Source's
         pallet_mismatch       packed items are handled with none produced above,
                               or a splitter is fed empty pallets from a Source
         route_unused_edge     a routing machine's out-edge that no route names,
                               or that has a share of 0
         loop_jam              stations form a loop that stops when it is full
+        station_overload      a machine gets more parts on average than it can
+                              finish, from the mean times. Its details give
+                              effective_process_time, interarrival_time and
+                              utilization.
+        buffer_delay_capacity a buffer with a delay has fewer places than its
+                              flow × delay
+        calendar_mismatch     a Source delivers while the machine after it is
+                              off shift
+        unused_calendar       a calendar no Source or machine follows
+        low_availability      a machine is in repair more than half its time
+        normal_clamping       a normal distribution draws below 0 often
+        no_effect_setting     ROUND_ROBIN or RANDOM over a single edge
+        part_type_dead_end    a Source's parts can only reach scrap Sinks
 
     Returns a report dict:
         {
@@ -883,12 +1239,20 @@ def validate_model(*, model: FactoryModel | None = None) -> dict:
     findings += _check_combiner_quantities(model, node_types)
     findings += _check_reachability(model, node_types, downstream, upstream)
     findings += _check_silent_discard(model)
-    findings += _check_branch_symmetry(model, node_types, downstream)
     findings += _check_conveyor_item_length(model, node_types, upstream)
     findings += _check_pallets(model, node_types, upstream)
     findings += _check_routes(model, node_types)
     findings += _check_shares(model)
     findings += _check_loops(model, downstream)
+    inflow, through = _flows(model, node_types)
+    findings += _check_overload(model, node_types, inflow)
+    findings += _check_buffer_delay(model, through)
+    findings += _check_calendar_mismatch(model, node_types)
+    findings += _check_unused_calendars(model)
+    findings += _check_availability(model)
+    findings += _check_normal_clamping(model)
+    findings += _check_no_effect(model)
+    findings += _check_scrap_only(model, node_types)
 
     errors = [f for f in findings if f["severity"] == _ERROR]
     warnings = [f for f in findings if f["severity"] == _WARNING]
