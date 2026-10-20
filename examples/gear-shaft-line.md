@@ -2,7 +2,7 @@
 
 ## Plain words
 
-Blanks arrive from the saw on average every 3 minutes, exponentially
+Blanks arrive from the saw on average every 6 minutes, exponentially
 distributed. A lathe turns each blank in 4 to 6 minutes, uniformly
 distributed, and hands the shafts in turn to two mills. Each mill works on one
 shaft at a time and needs 8 minutes per shaft. Both mills put their shafts
@@ -28,7 +28,7 @@ All times in minutes. Every buffer without a stated delay has `delay=0`.
 
 | Node      | Type    | Settings |
 |-----------|---------|----------|
-| `saege`   | Source  | `inter_arrival_time="exp(3)"`, `blocking=True` |
+| `saege`   | Source  | `inter_arrival_time="exp(6)"`, `blocking=True` |
 | `drehen`  | Machine | `processing_delay="uniform(4, 6)"`, `out_edge_selection="ROUND_ROBIN"` |
 | `fraese1` | Machine | `processing_delay=8` |
 | `fraese2` | Machine | `processing_delay=8` |
@@ -57,7 +57,7 @@ Run: `run_replications(until=480, ...)`.
 
 ```mermaid
 flowchart LR
-    saege(["saw<br/>exp(3)"]) -->|"buffer · 10"| drehen{{"turning<br/>uniform(4, 6)<br/>in turn"}}
+    saege(["saw<br/>exp(6)"]) -->|"buffer · 10"| drehen{{"turning<br/>uniform(4, 6)<br/>in turn"}}
 
     drehen -->|"buffer · 5"| fraese1{{"mill 1<br/>8"}}
     drehen -->|"buffer · 5"| fraese2{{"mill 2<br/>8"}}
