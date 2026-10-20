@@ -399,6 +399,7 @@ def create_splitter(
     in_edge_selection: str = "FIRST_AVAILABLE",
     out_edge_selection: str = "FIRST_AVAILABLE",
     node_setup_time: float = 0,
+    pallet_edge: str | None = None,
     *,
     model: FactoryModel | None = None,
 ) -> dict:
@@ -423,6 +424,12 @@ def create_splitter(
         out_edge_selection: out-edge selection strategy, one of
             "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
         node_setup_time: constant initial setup delay.
+        pallet_edge: id of the out-edge the empty pallet leaves by, e.g. the
+            buffer to a pallet return. mode="UNPACK" and
+            out_edge_selection="FIRST_AVAILABLE" only. The unpacked items then
+            use the other out-edges. None sends the pallet like any item, to
+            the first out-edge with space. The edge must be connected to this
+            splitter before the run.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -454,6 +461,13 @@ def create_splitter(
         raise ValueError("in_edge_selection must be a string (v1).")
     if not isinstance(out_edge_selection, str):
         raise ValueError("out_edge_selection must be a string (v1).")
+    if pallet_edge is not None:
+        if not isinstance(pallet_edge, str) or not pallet_edge:
+            raise ValueError("pallet_edge must be an edge id or None.")
+        if mode != "UNPACK":
+            raise ValueError('pallet_edge needs mode="UNPACK".')
+        if out_edge_selection != "FIRST_AVAILABLE":
+            raise ValueError('pallet_edge needs out_edge_selection="FIRST_AVAILABLE".')
 
     node = Splitter(
         env=model.env,
@@ -465,6 +479,7 @@ def create_splitter(
         split_quantity=split_quantity,
         in_edge_selection=in_edge_selection,
         out_edge_selection=out_edge_selection,
+        pallet_edge=pallet_edge,
     )
 
     model.add_node(id, node)
@@ -479,6 +494,7 @@ def create_splitter(
             "in_edge_selection": in_edge_selection,
             "out_edge_selection": out_edge_selection,
             "node_setup_time": node_setup_time,
+            "pallet_edge": pallet_edge,
         },
     )
 
@@ -492,6 +508,7 @@ def create_splitter(
         "in_edge_selection": in_edge_selection,
         "out_edge_selection": out_edge_selection,
         "node_setup_time": node_setup_time,
+        "pallet_edge": pallet_edge,
         "in_edges": 0,
         "out_edges": 0,
     }

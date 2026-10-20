@@ -415,3 +415,11 @@ def test_combiner_accepts_distribution_string(model):
     summary = create_combiner("cb1", processing_delay="exp(3)", model=model)
     assert summary["processing_delay"] == "exp(3)"
     assert callable(model.nodes["cb1"].processing_delay)
+
+
+def test_splitter_pallet_edge_needs_unpack_and_first_available(model):
+    with pytest.raises(ValueError, match="UNPACK"):
+        create_splitter("sp1", mode="SPLIT", split_quantity=2, pallet_edge="b", model=model)
+    with pytest.raises(ValueError, match="FIRST_AVAILABLE"):
+        create_splitter("sp2", out_edge_selection="ROUND_ROBIN", pallet_edge="b", model=model)
+    assert create_splitter("sp3", pallet_edge="b", model=model)["pallet_edge"] == "b"

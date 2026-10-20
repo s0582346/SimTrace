@@ -621,3 +621,46 @@ def test_item_flow_counts_an_item_the_machine_took_at_the_machine(model):
     waiting = {r["place"]: r["items"] for r in verify_item_flow(model=model)["not_delivered"]}
     assert waiting["slow"] == 1
     assert waiting["b_in"] == 3
+
+
+def _pallet_loop(model, pallet_edge):
+    """parts + pallets -> pack -> unpack -> b_parts_out -> ship,
+    unpack -> b_pallet_out -> returns."""
+    create_source("parts", inter_arrival_time=1, blocking=True, model=model)
+    create_source("pallets", inter_arrival_time=4, flow_item_type="pallet",
+                  blocking=True, model=model)
+    create_combiner("pack", target_quantity_of_each_item=[1, 2], processing_delay=1,
+                    model=model)
+    create_splitter("unpack", processing_delay=1, pallet_edge=pallet_edge, model=model)
+    create_sink("ship", model=model)
+    create_sink("returns", model=model)
+    for edge_id in ("b_parts", "b_pallets", "b_packed", "b_parts_out", "b_pallet_out"):
+        create_buffer(edge_id, capacity=10, model=model)
+    connect("b_pallets", "pallets", "pack", model=model)
+    connect("b_parts", "parts", "pack", model=model)
+    connect("b_packed", "pack", "unpack", model=model)
+    connect("b_parts_out", "unpack", "ship", model=model)
+    connect("b_pallet_out", "unpack", "returns", model=model)
+    return model
+
+
+def _ends(model):
+    report = verify_item_flow(model=model)
+    return {(r["route"][0], r["end"]) for r in report["routes"]}
+
+
+def test_without_pallet_edge_the_empty_pallet_goes_with_the_parts(model):
+    run_simulation(60, seed=1, model=_pallet_loop(model, None))
+    assert _ends(model) == {("parts", "ship"), ("pallets", "ship")}
+
+
+def test_pallet_edge_sends_only_the_empty_pallet_to_its_edge(model):
+    run_simulation(60, seed=1, model=_pallet_loop(model, "b_pallet_out"))
+    assert _ends(model) == {("parts", "ship"), ("pallets", "returns")}
+    assert verify_item_flow(model=model)["all_proper"]
+
+
+def test_pallet_edge_must_be_an_out_edge(model):
+    _pallet_loop(model, "b_parts")
+    with pytest.raises(Exception, match="not an out edge"):
+        run_simulation(10, seed=1, model=model)

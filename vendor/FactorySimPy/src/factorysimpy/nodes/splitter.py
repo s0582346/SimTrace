@@ -24,6 +24,8 @@ class Splitter(Node):
                 - "SPLIT": The splitter splits the incoming item into a target quantity of items, specified by `split_quantity` and pushes each item to an output edge, one by one.
 
             split_quantity (int, optional): Target quantity of items to split the input flow item into. This parameter is required if `mode` is "SPLIT". If `mode` is "UNPACK", this parameter is ignored.
+
+            pallet_edge (str, optional): Id of the out edge the empty pallet leaves by, mode "UNPACK" only. The unpacked items then use the other out edges. Requires out_edge_selection "FIRST_AVAILABLE". If None, the empty pallet is pushed like any item.
             
             processing_delay (None, int, float, Generator, Callable): Delay for processing items. Can be:
                 
@@ -72,7 +74,7 @@ class Splitter(Node):
                 
     """
 
-    def __init__(self, env, id, in_edges=None, out_edges=None,node_setup_time=0,processing_delay=0,blocking=True,mode= "UNPACK", split_quantity=None, in_edge_selection="FIRST_AVAILABLE",out_edge_selection="FIRST_AVAILABLE"):
+    def __init__(self, env, id, in_edges=None, out_edges=None,node_setup_time=0,processing_delay=0,blocking=True,mode= "UNPACK", split_quantity=None, in_edge_selection="FIRST_AVAILABLE",out_edge_selection="FIRST_AVAILABLE", pallet_edge=None):
         super().__init__(env, id,in_edges, out_edges, node_setup_time)
         
         self.state = "SETUP_STATE"  # Initial state of the Splitter
@@ -82,6 +84,7 @@ class Splitter(Node):
         self.blocking = blocking
         self.mode = mode
         self.split_quantity = split_quantity
+        self.pallet_edge = pallet_edge
         self.per_thread_total_time_in_blocked_state = 0.0
         self.per_thread_total_time_in_processing_state = 0.0
         
@@ -178,6 +181,14 @@ class Splitter(Node):
                 raise ValueError("in_edge_selection should not be None")
             if self.out_edge_selection is None:
                 raise ValueError("out_edge_selection should not be None.")
+            if self.pallet_edge is not None:
+                if self.mode != "UNPACK":
+                    raise ValueError(f"{self.id} - pallet_edge needs mode UNPACK.")
+                if self.out_edge_selection != "FIRST_AVAILABLE":
+                    raise ValueError(f"{self.id} - pallet_edge needs out_edge_selection FIRST_AVAILABLE.")
+                if len(self.out_edges) < 2:
+                    raise ValueError(f"{self.id} - pallet_edge needs a second out edge for the items.")
+                self._pallet_out_edge()
         
 
     
@@ -550,8 +561,21 @@ class Splitter(Node):
 
         
 
+    def _pallet_out_edge(self):
+        """The out edge named by `pallet_edge`, or None if it is not set."""
+        if self.pallet_edge is None:
+            return None
+        for edge in self.out_edges:
+            if edge.id == self.pallet_edge:
+                return edge
+        raise ValueError(f"{self.id} - pallet_edge '{self.pallet_edge}' is not an out edge of this splitter.")
+
     def worker(self,pallet,processing_delay,req_token,):
         #Worker process that processes items with resource and reserve handling."""
+            # With pallet_edge, the items use the other out edges and the empty pallet only that one.
+            pallet_out_edge = self._pallet_out_edge()
+            part_edges = [edge for edge in self.out_edges if edge is not pallet_out_edge]
+            pallet_edges = [pallet_out_edge] if pallet_out_edge is not None else self.out_edges
             self.check_thread_state_and_update_splitter_state()  # Check and update the splitter state based on worker states
             processing_start_time = self.env.now
             #wait for processing_delay amount of time
@@ -578,7 +602,7 @@ class Splitter(Node):
                     
                         #self.out_edge_events = [edge.reserve_put() if edge.__class__.__name__ == "ConveyorBelt" else edge.inbuiltstore.reserve_put() for edge in self.out_edges]
                         #out_edge_events = [self.out_edges[i].inbuiltstore.reserve_put() for i in range(len(self.out_edges)-1,-1,-1)]
-                        out_edge_events= [edge.reserve_put() for edge in self.out_edges]  # Filter out None events
+                        out_edge_events= [edge.reserve_put() for edge in part_edges]  # Filter out None events
                         #print(self.env.now,len(self.out_edge_events),self.out_edges)
                         triggered_out_edge_events = self.env.any_of(out_edge_events)
                         yield triggered_out_edge_events  # Wait for any in_edge to be available
@@ -588,7 +612,7 @@ class Splitter(Node):
                         
                         #self.out_edge_events.remove(chosen_put_event)  # Remove the chosen event from the list
                         if chosen_put_event is None:
-                            raise ValueError(f"{self.env.now},{self.id} - No out_edge available for processing{[edge.id for edge in self.out_edges]}!")
+                            raise ValueError(f"{self.env.now},{self.id} - No out_edge available for processing{[edge.id for edge in part_edges]}!")
                         edge_index = out_edge_events.index(chosen_put_event)
                         self.stats["out_edge_selection"].append(edge_index)  # Store the index of the chosen out_edge
                         #out_edge_events.remove(chosen_put_event)  # Remove the chosen event from the list
@@ -602,14 +626,14 @@ class Splitter(Node):
                         #putting the item in the chosen out_edge
                         
                         item.update_node_event(self.id, self.env, "exit")
-                        if self.out_edges[edge_index].__class__.__name__ == "Buffer":
+                        if part_edges[edge_index].__class__.__name__ == "Buffer":
                             self.stats["num_item_processed"] += 1
-                            itemput=self.out_edges[edge_index].put(chosen_put_event, item)
+                            itemput=part_edges[edge_index].put(chosen_put_event, item)
                             #itemput = chosen_put_event.resourcename.put(chosen_put_event, item)  # Get the item from the chosen in_edge
 
                         else:
-                            raise ValueError(f"Unsupported edge type: {self.out_edges[edge_index].__class__.__name__}")
-                        print(f"T={self.env.now:.2f}: {self.id} puts item {item.id} into {self.out_edges[edge_index].id} ")
+                            raise ValueError(f"Unsupported edge type: {part_edges[edge_index].__class__.__name__}")
+                        print(f"T={self.env.now:.2f}: {self.id} puts item {item.id} into {part_edges[edge_index].id} ")
                         
                         self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
                         #self.env.active_process.thread_state = "PROCESSING_STATE"  # Update the thread state to PROCESSING_STATE BLOCKING
@@ -622,7 +646,7 @@ class Splitter(Node):
                     #not blocking, check can_put on all, if all fails, then the item is discarded
                     else:
                         out_edge_index_to_put = None
-                        for edge in self.out_edges:
+                        for edge in part_edges:
                             if edge.can_put():
                                 out_edge_index_to_put = edge
                                 break
@@ -701,14 +725,14 @@ class Splitter(Node):
                     self.check_thread_state_and_update_splitter_state()
                     blocking_start_time = self.env.now
                 
-                    out_edge_events= [edge.reserve_put() for edge in self.out_edges]  # Filter out None events
+                    out_edge_events= [edge.reserve_put() for edge in pallet_edges]  # Filter out None events
                     triggered_out_edge_events = self.env.any_of(out_edge_events)
                     yield triggered_out_edge_events  # Wait for any in_edge to be available
                     
                     chosen_put_event = next((event for event in out_edge_events if event.triggered), None)
                     
                     if chosen_put_event is None:
-                        raise ValueError(f"{self.env.now},{self.id} - No out_edge available for processing{[edge.id for edge in self.out_edges]}!")
+                        raise ValueError(f"{self.env.now},{self.id} - No out_edge available for processing{[edge.id for edge in pallet_edges]}!")
                     edge_index = out_edge_events.index(chosen_put_event)
                     self.stats["out_edge_selection"].append(edge_index)  # Store the index of the chosen out_edge
                     
@@ -719,19 +743,19 @@ class Splitter(Node):
 
                     #putting the item in the chosen out_edge
                     item.update_node_event(self.id, self.env, "exit")
-                    if self.out_edges[edge_index].__class__.__name__ == "Buffer":
+                    if pallet_edges[edge_index].__class__.__name__ == "Buffer":
                         self.stats["num_item_processed"] += 1
-                        itemput=self.out_edges[edge_index].put(chosen_put_event, item)
+                        itemput=pallet_edges[edge_index].put(chosen_put_event, item)
                     else:
-                        raise ValueError(f"Unsupported edge type: {self.out_edges[edge_index].__class__.__name__}")
-                    print(f"T={self.env.now:.2f}: {self.id} puts empty pallet {item.id} into {self.out_edges[edge_index].id} ")
+                        raise ValueError(f"Unsupported edge type: {pallet_edges[edge_index].__class__.__name__}")
+                    print(f"T={self.env.now:.2f}: {self.id} puts empty pallet {item.id} into {pallet_edges[edge_index].id} ")
                     
                     self._update_avg_time_spent_in_blocked(self.env.now - blocking_start_time)
                     
                 #not blocking, check can_put on all, if all fails, then the item is discarded
                 else:
                     out_edge_index_to_put = None
-                    for edge in self.out_edges:
+                    for edge in pallet_edges:
                         if edge.can_put():
                             out_edge_index_to_put = edge
                             break

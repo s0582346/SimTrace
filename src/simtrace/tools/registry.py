@@ -217,6 +217,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         in_edge_selection: str = "FIRST_AVAILABLE",
         out_edge_selection: str = "FIRST_AVAILABLE",
         node_setup_time: float = 0,
+        pallet_edge: str | None = None,
     ) -> dict:
         """Create a Splitter node that emits several items from one incoming item.
 
@@ -240,6 +241,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             out_edge_selection: out-edge selection strategy, one of
                 "FIRST_AVAILABLE", "RANDOM", "ROUND_ROBIN".
             node_setup_time: constant initial setup delay.
+            pallet_edge: id of the out-edge the empty pallet leaves by, e.g.
+                the buffer to its own sink. Needs mode="UNPACK" and
+                out_edge_selection="FIRST_AVAILABLE"; the unpacked items then
+                use the other out-edges. Without it the empty pallet goes to
+                the first out-edge with space, usually the parts' sink.
         """
         return builders.create_splitter(
             id=id,
@@ -250,6 +256,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             in_edge_selection=in_edge_selection,
             out_edge_selection=out_edge_selection,
             node_setup_time=node_setup_time,
+            pallet_edge=pallet_edge,
         )
 
     @mcp.tool()
