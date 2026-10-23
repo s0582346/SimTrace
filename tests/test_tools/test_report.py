@@ -248,6 +248,59 @@ def test_validation_tab_has_item_flow_toggle(tmp_path):
     assert "<td class='num'>100%</td>" in flow
 
 
+def test_validation_tab_has_extreme_conditions_toggle(tmp_path):
+    target = tmp_path / "run.html"
+    _quiet(run_simulation, 100, seed=1, model=_line(), report_path=str(target))
+    tab = _validation_tab(target.read_text(encoding="utf-8"))
+    extreme = tab[tab.index("<code>verify_extreme_conditions</code>"):]
+    assert "runs at the bounds</span>" in extreme
+    assert "<h3>Every run on one axis</h3>" in extreme
+    for name in ("Delivered", "WIP", "Blocked"):
+        assert f">{name}</button>" in extreme
+    for group in ("Stations at their bounds", "Extreme inputs", "Targeted extremes"):
+        assert group in extreme
+    assert "<h3>Parts delivered per combination</h3>" in extreme
+    assert "<table class='bounds'>" in extreme
+    assert "limit:" not in extreme and " effect</th>" not in extreme
+
+
+def _shares(**busy):
+    """A run in which each named station worked for its share of the run."""
+    return {"shares": {s: {"working": w, "waiting": 1 - w, "blocked": 0.0, "down": 0.0}
+                       for s, w in busy.items()},
+            "sources_blocked": {"src": 5.0}}
+
+
+def test_the_busiest_station_limits_the_line():
+    from simtrace.tools.simulation.report import _limit
+
+    assert _limit([_shares(sanding=0.14, painting=0.99)], saturated=True) == "painting"
+
+
+def test_stations_equally_busy_limit_the_line_together():
+    from simtrace.tools.simulation.report import _limit
+
+    assert _limit([_shares(mill1=0.95, mill2=0.94, turning=0.6)], True) == "mill1 + mill2"
+
+
+def test_breakdown_time_counts_as_busy():
+    from simtrace.tools.simulation.report import _limit
+
+    run = _shares(lathe=0.60, mill=0.75)
+    run["shares"]["lathe"]["down"] = 0.30
+
+    assert _limit([run], True) == "lathe"
+
+
+def test_a_line_whose_sources_never_wait_is_limited_by_its_arrivals():
+    from simtrace.tools.simulation.report import _limit
+
+    run = {**_shares(painting=0.7), "sources_blocked": {"src": 0.0}}
+
+    assert _limit([run], saturated=False) == "arrivals"
+    assert _limit([run], saturated=True) == "painting"
+
+
 def test_replication_report_says_item_flow_was_not_checked(tmp_path):
     target = tmp_path / "reps.html"
     _quiet(run_replications, 50, 2, model=_line(), n_jobs=1,
