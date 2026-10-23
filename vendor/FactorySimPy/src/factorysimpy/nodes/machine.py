@@ -681,7 +681,7 @@ class Machine(Node):
                     yield self.env.timeout(remaining)
                     break
                 except simpy.Interrupt:
-                    remaining -= self.env.now - run_start
+                    remaining = max(0.0, remaining - (self.env.now - run_start))
                 finally:
                     this_worker.in_processing = False
             #self.stats["num_item_processed"] += 1
