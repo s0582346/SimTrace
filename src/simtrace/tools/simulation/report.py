@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 import statistics
 from html import escape
@@ -53,6 +54,80 @@ details.tool > summary { cursor: pointer; font-size: 1.15rem; font-weight: 600; 
 details.tool > summary .status { font-size: 0.85rem; margin-left: 8px; }
 details.tool h3 { margin: 14px 0 6px; font-size: 1rem; }
 ul.settings { color: #222; margin: 0 0 12px; padding-left: 20px; }
+details.findings.info summary { color: #2f6fb0; }
+.extreme .xc-switch { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 6px; }
+.extreme .xc-switch button { font: inherit; font-size: 0.84rem; padding: 4px 12px;
+  border: 1px solid #dfe2e7; border-radius: 14px; background: #f4f5f7; color: #1d1d1f;
+  cursor: pointer; }
+.extreme .xc-switch button[aria-pressed="true"] { background: #0f1b2a; border-color: #0f1b2a;
+  color: #fff; }
+.extreme .xc-pane { display: none; }
+.extreme .xc-pane.active { display: block; }
+.extreme .ladder { display: grid; gap: 1px; min-width: 0; }
+.extreme .grp { display: flex; align-items: center; gap: 7px; font-size: 0.7rem;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #5b6370; font-weight: 600;
+  margin: 10px 0 2px 4px; }
+.extreme .grp i { display: inline-block; width: 10px; height: 10px; flex: none; }
+.extreme .row { display: grid; grid-template-columns: var(--lab, 150px) minmax(0, 1fr); gap: 10px;
+  align-items: center; border: 0; background: none; font: inherit; color: inherit;
+  text-align: left; padding: 3px 4px; border-radius: 4px; cursor: pointer; width: 100%; }
+.extreme .row:hover { background: #f4f5f7; }
+.extreme .row.sel { background: #f4f5f7; }
+.extreme .row .lab { font-size: 0.82rem; line-height: 1.25; min-width: 0;
+  overflow-wrap: anywhere; }
+.extreme .track { position: relative; height: 22px; }
+.extreme .track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%;
+  border-top: 1px dashed #dfe2e7; }
+.extreme .track .ab { position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #1d1d1f; opacity: 0.18; }
+.extreme .mark { position: absolute; top: 50%; width: 11px; height: 11px;
+  transform: translate(-50%, -50%); }
+.extreme .circle { border-radius: 50%; background: #c27613; }
+.extreme .square { background: #1b7f8c; }
+.extreme .diamond { background: #6b7686; }
+.extreme .grp i.diamond { transform: rotate(45deg) scale(0.8); }
+.extreme .mark.diamond { transform: translate(-50%, -50%) rotate(45deg) scale(0.85); }
+.extreme .mark.flag { box-shadow: 0 0 0 3px #e6eef8, 0 0 0 4px #2f6fb0; }
+.extreme .val { position: absolute; top: 50%; transform: translate(8px, -50%);
+  font-size: 0.74rem; color: #5b6370; white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+.extreme .val.left { transform: translate(calc(-100% - 8px), -50%); }
+.extreme .none { position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  font-size: 0.74rem; font-style: italic; color: #5b6370; background: #fff;
+  padding-right: 6px; }
+.extreme .row:hover .none, .extreme .row.sel .none { background: #f4f5f7; }
+.extreme .axis { display: grid; grid-template-columns: var(--lab, 150px) minmax(0, 1fr); gap: 10px;
+  padding: 0 4px; }
+.extreme .ticks { position: relative; height: 18px; font-size: 0.72rem; color: #5b6370; }
+.extreme .ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.extreme .axis-title { font-size: 0.74rem; color: #5b6370; text-align: center;
+  margin-top: 2px; }
+.extreme .grid-wrap { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start;
+  overflow-x: auto; margin-top: 10px; }
+.extreme table.bounds { border-collapse: separate; border-spacing: 4px; font-size: 0.88rem; }
+.extreme table.bounds th { font-weight: 600; font-size: 0.78rem; color: #5b6370;
+  text-align: center; padding: 4px 8px; border: none; background: none; }
+.extreme table.bounds th span { font-weight: 400; }
+.extreme table.bounds th.rowh { text-align: right; white-space: nowrap; }
+.extreme table.bounds th { white-space: nowrap; }
+.extreme table.bounds.compact td.cell { min-width: 0; padding: 6px 8px; }
+.extreme table.bounds.compact td.cell b { font-size: 1rem; }
+.extreme table.bounds.compact td.cell small, .extreme table.bounds.compact td.cell br { display: none; }
+.extreme table.bounds.compact .lim { margin-top: 2px; font-size: 0.68rem; padding: 0 5px; }
+.extreme table.bounds td.cell { background: #f4f5f7; border: none; border-radius: 6px;
+  padding: 10px 14px; text-align: center; min-width: 118px; cursor: pointer; }
+.extreme table.bounds td.cell:hover { outline: 2px solid #1b7f8c; }
+.extreme table.bounds td.cell.empty { cursor: default; color: #5b6370; }
+.extreme table.bounds td.cell.artifact { background: repeating-linear-gradient(135deg,
+  #f4f5f7 0 6px, #e9ebef 6px 12px); }
+.extreme table.bounds td.cell b { display: block; font-size: 1.35rem;
+  font-variant-numeric: tabular-nums; }
+.extreme table.bounds td.cell small { color: #5b6370; font-size: 0.74rem; }
+.extreme table.bounds td.eff { color: #5b6370; font-size: 0.8rem; text-align: center;
+  border: none; font-variant-numeric: tabular-nums; }
+.extreme table.bounds td.eff b { color: #1d1d1f; font-size: 1rem; }
+.extreme .lim { display: inline-block; margin-top: 4px; font-size: 0.72rem; padding: 1px 7px;
+  border-radius: 9px; background: #fff; border: 1px solid #dfe2e7; }
 """
 
 
@@ -520,6 +595,426 @@ def _item_flow_section(model: FactoryModel, single_run: bool) -> str:
     return _tool_section("verify_item_flow", status, summary, "".join(parts))
 
 
+def _nice_end(value: float) -> tuple[float, float]:
+    """An axis end at or above `value` and a tick step that divides it."""
+    if value <= 0:
+        return 1.0, 0.25
+    raw = value / 5
+    magnitude = 10 ** math.floor(math.log10(raw))
+    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
+    return step * math.ceil(value / step - 1e-9), step
+
+
+def _num(value: float | None) -> str:
+    return "–" if value is None else f"{value:.2f}"
+
+
+def _amount(value: float) -> str:
+    """A count as a whole number, a mean of several runs with one decimal."""
+    return f"{value:g}" if value == int(value) else f"{value:.1f}"
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _most_blocked(run: dict) -> float | None:
+    """The largest share of the run any station spent blocked, in percent."""
+    shares = run.get("shares")
+    if not shares:
+        return None
+    return 100 * max(own["blocked"] for own in shares.values())
+
+
+def _blocked_by(runs: list[dict]) -> str | None:
+    """The station with the largest blocked share, on average over the runs."""
+    blocked: dict[str, list[float]] = {}
+    for run in runs:
+        for station, own in (run.get("shares") or {}).items():
+            blocked.setdefault(station, []).append(own["blocked"])
+    return max(blocked, key=lambda s: sum(blocked[s])) if blocked else None
+
+
+# Ladder measures: key, button, axis title, value of one run.
+_MEASURES = (
+    ("delivered", "Delivered", "parts delivered", lambda r: r.get("received")),
+    ("wip", "WIP", "WIP at the end [parts]", lambda r: r.get("in_line")),
+    ("blocked", "Blocked", "most-blocked station", _most_blocked),
+)
+_GROUPS = (
+    ("bounds", "square", "Stations at their bounds"),
+    ("inputs", "circle", "Extreme inputs"),
+    ("targeted", "diamond", "Targeted extremes"),
+)
+# Extreme inputs in ladder order.
+_INPUT_LABELS = {
+    "zero_times": "zero times",
+    "arrivals_x10": "arrivals × 10",
+    "no_breakdowns": "no breakdowns",
+    "endless_buffers": "endless buffers",
+    "minimal_buffers": "minimal buffers",
+    "no_arrivals": "no arrivals",
+}
+
+
+def _at_bound(bounds: dict, station: str, level: str) -> str:
+    """A station's time at one bound, to two decimals at most."""
+    value = bounds[station]["low" if level == "min" else "high"]
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _impossible(bounds: dict, levels: dict) -> bool:
+    """A station sits at a lower bound of 0 that only its distribution allows."""
+    return any(
+        level == "min" and bounds[s]["low"] == 0 and bounds[s]["high"] > 0
+        for s, level in levels.items()
+    )
+
+
+# Whether the grid names what limits the line in each cell and shows each
+# station's effect. Off: the grid shows the parts delivered only.
+_SHOW_LIMITS = False
+
+# Whether the grid has its note on arrivals, breakdowns, runs and hatching.
+_SHOW_GRID_NOTE = False
+
+# Stations whose busy shares lie this close to the busiest one are named with it.
+_LIMIT_TIE = 0.02
+
+
+def _limit(runs: list[dict], saturated: bool) -> str | None:
+    """What limits the line in these runs.
+
+    "arrivals" when the line was not kept full and no source was ever held up
+    by a full buffer. Otherwise the busiest station, busy meaning working or
+    broken down, on average over the runs, joined by every station within
+    `_LIMIT_TIE` of it.
+    """
+    if not runs:
+        return None
+    if not saturated and all(
+        not any((run.get("sources_blocked") or {}).values()) for run in runs
+    ):
+        return "arrivals"
+    busy: dict[str, list[float]] = {}
+    for run in runs:
+        for station, own in (run.get("shares") or {}).items():
+            busy.setdefault(station, []).append(own["working"] + own.get("down", 0.0))
+    if not busy:
+        return None
+    mean = {station: sum(v) / len(v) for station, v in busy.items()}
+    top = max(mean.values())
+    return " + ".join(s for s, v in mean.items() if v >= top - _LIMIT_TIE)
+
+
+def _combination_cells(combos: dict) -> dict[tuple, dict]:
+    """Per combination, as a tuple of levels in station order: the mean of its
+    runs and what limits the line there."""
+    grouped: dict[tuple, list[dict]] = {}
+    for run in combos["runs"]:
+        key = tuple(run["at"][s] for s in combos["stations"])
+        grouped.setdefault(key, []).append(run)
+    cells = {}
+    for key, runs in grouped.items():
+        done = [r for r in runs if not r["failed"]]
+        cells[key] = {
+            "id": "c" + "".join("1" if level == "max" else "0" for level in key),
+            "levels": dict(zip(combos["stations"], key)),
+            "failed": runs[0]["failed"] if not done else None,
+            "values": {
+                name: _mean([v for v in (value(r) for r in done) if v is not None])
+                for name, _, _, value in _MEASURES
+            },
+            "limit": _limit(done, combos.get("arrivals") == "saturated"),
+            "blocked_by": _blocked_by(done),
+        }
+    return cells
+
+
+def _ladder_rows(result: dict, cells: dict[tuple, dict]) -> list[dict]:
+    """Every run as one row: the combinations, the extreme inputs, the targeted extremes."""
+    combos = result["combinations"]
+    bounds = combos.get("bounds") or {}
+    rows = []
+    for cell in cells.values():
+        levels = cell["levels"]
+        rows.append({
+            "id": cell["id"], "group": "bounds", "failed": cell["failed"],
+            "label": " · ".join(f"{s} {_at_bound(bounds, s, lv)}" for s, lv in levels.items()),
+            "values": cell["values"], "flag": _impossible(bounds, levels),
+            "blocked_by": cell["blocked_by"],
+        })
+    inputs = result.get("inputs", {}).get("runs", [])
+    for case, label in _INPUT_LABELS.items():
+        runs = [r for r in inputs if r["case"] == case]
+        if not runs:
+            continue
+        done = [r for r in runs if not r["failed"]]
+        rows.append({
+            "id": case, "group": "inputs", "label": label, "flag": False,
+            "failed": runs[0]["failed"] if not done else None,
+            "values": {
+                name: _mean([v for v in (value(r) for r in done) if v is not None])
+                for name, _, _, value in _MEASURES
+            },
+            "blocked_by": _blocked_by(done),
+        })
+    for n, run in enumerate((result.get("targeted") or {}).get("runs", [])):
+        label = {
+            "station_stopped": f"{run['target']} stopped",
+            "one_branch": f"{run['target']}: all to {run['edge']}",
+            "one_source": f"{run['target']} alone",
+        }.get(run["case"], run["target"])
+        rows.append({
+            "id": f"t{n}", "group": "targeted", "label": label, "flag": False,
+            "failed": run["failed"],
+            "values": {name: None if run["failed"] else value(run)
+                       for name, _, _, value in _MEASURES},
+            "blocked_by": None if run["failed"] else _blocked_by([run]),
+        })
+    return rows
+
+
+def _ladder(rows: list[dict], as_built: list[dict]) -> str:
+    """Every run on one axis, one pane per measure behind a switch."""
+    buttons, panes = [], []
+    # Wide enough for the longest label on one line, up to half the page.
+    width = min(440, max(150, 7 * max(len(row["label"]) for row in rows)))
+    for i, (name, button, title, value) in enumerate(_MEASURES):
+        built = _mean([v for v in (value(r) for r in as_built) if v is not None])
+        seen = [r["values"][name] for r in rows if r["values"][name] is not None]
+        if name == "blocked":
+            end, step = 100.0, 25.0
+        else:
+            end, step = _nice_end(max(seen + ([built] if built is not None else []), default=0))
+        unit = " %" if name == "blocked" else ""
+
+        def pos(v: float) -> str:
+            return f"{100 * v / end:.2f}%"
+
+        html, group = [], None
+        for row in rows:
+            if row["group"] != group:
+                group = row["group"]
+                shape, heading = next((s, h) for g, s, h in _GROUPS if g == group)
+                html.append(f"<div class='grp'><i class='{shape}'></i>{escape(heading)}</div>")
+            shape = next(s for g, s, _ in _GROUPS if g == row["group"])
+            v = row["values"][name]
+            if row["failed"]:
+                inner = "<span class='none'>failed</span>"
+            elif v is None:
+                inner = "<span class='none'>not recorded</span>"
+            else:
+                text = f"{v:.1f}" if name == "blocked" else _amount(round(v, 1))
+                if name == "blocked" and v > 0 and row.get("blocked_by"):
+                    unit_text = f"{unit} {escape(row['blocked_by'])}"
+                else:
+                    unit_text = unit
+                left = " left" if v > 0.8 * end else ""
+                inner = (f"<span class='mark {shape}{' flag' if row['flag'] else ''}' "
+                         f"style='left:{pos(v)}'></span><span class='val{left}' "
+                         f"style='left:{pos(v)}'>{text}{unit_text}</span>")
+            line = (f"<span class='ab' style='left:{pos(built)}' "
+                    f"title='as built: {_amount(round(built, 1))}{unit}'></span>"
+                    if built is not None else "")
+            html.append(
+                f"<button type='button' class='row' data-id='{row['id']}'>"
+                f"<span class='lab'>{escape(row['label'])}</span>"
+                f"<span class='track'>{line}{inner}</span></button>"
+            )
+        ticks = "".join(
+            f"<span style='left:{pos(k * step)}'>{k * step:g}{unit}</span>"
+            for k in range(round(end / step) + 1)
+        )
+        html.append(f"<div class='axis'><div></div><div><div class='ticks'>{ticks}</div>"
+                    f"<div class='axis-title'>{escape(title)}</div></div></div>")
+        buttons.append(f"<button type='button' data-m='{name}' "
+                       f"aria-pressed='{'true' if i == 0 else 'false'}'>{button}</button>")
+        panes.append(f"<div class='xc-pane{' active' if i == 0 else ''}' data-m='{name}'>"
+                     f"<div class='ladder' style='--lab: {width}px'>{''.join(html)}</div></div>")
+    return (
+        "<h3>Every run on one axis</h3>"
+        f"<div class='xc-switch' role='group' aria-label='Measure'>{''.join(buttons)}</div>"
+        + "".join(panes)
+    )
+
+
+def _header(bounds: dict, stations: list[str], levels: tuple, with_kind: bool) -> str:
+    """A grid header: each station at its bound, and under a single station
+    which bound that is."""
+    lines = "<br>".join(
+        f"{escape(s)} {_at_bound(bounds, s, lv)} min" for s, lv in zip(stations, levels)
+    )
+    if not with_kind or len(stations) != 1:
+        return lines
+    own = bounds[stations[0]]
+    kind = own["entered"].split("(")[0]
+    if levels[0] == "min":
+        sub = f"{kind} lower bound"
+    else:
+        sub = f"{kind} upper bound" if own["capped"] else "99 % value"
+    return f"{lines}<br><span>{escape(sub)}</span>"
+
+
+def _bounds_grid(combos: dict, cells: dict[tuple, dict]) -> str:
+    """The parts delivered at every combination, one cell each: rows for the
+    first half of the stations, columns for the rest. With `_SHOW_LIMITS` each
+    cell also names what limits the line, and each station's effect is shown."""
+    stations = combos["stations"]
+    bounds = combos.get("bounds") or {}
+    if not stations or not bounds:
+        return ""
+    half = len(stations) // 2
+    on_rows, on_cols = stations[:half], stations[half:]
+    row_keys = list(itertools.product(("min", "max"), repeat=len(on_rows)))
+    col_keys = list(itertools.product(("min", "max"), repeat=len(on_cols)))
+    margin_col = _SHOW_LIMITS and len(on_cols) == 1
+    margin_row = _SHOW_LIMITS and len(on_rows) == 1
+
+    def delivered(rk: tuple, ck: tuple) -> float | None:
+        cell = cells.get(rk + ck)
+        return None if cell is None else cell["values"]["delivered"]
+
+    def effect(low: float | None, high: float | None) -> str:
+        return "–" if low is None or high is None else _amount(round(low - high, 1))
+
+    head = "<tr><th></th>" + "".join(
+        f"<th>{_header(bounds, on_cols, ck, True)}</th>" for ck in col_keys
+    ) + (f"<th>{escape(on_cols[0])} effect</th>" if margin_col else "") + "</tr>"
+    body, hatched = [], False
+    for rk in row_keys:
+        tds = []
+        for ck in col_keys:
+            cell = cells.get(rk + ck)
+            if cell is None:
+                tds.append("<td class='cell empty'>–</td>")
+                continue
+            impossible = _impossible(bounds, cell["levels"])
+            hatched |= impossible
+            value = cell["values"]["delivered"]
+            shown = "failed" if cell["failed"] else _amount(round(value, 1)) if value is not None else "–"
+            limit = (f"<br><span class='lim'>limit: {escape(cell['limit'])}</span>"
+                     if _SHOW_LIMITS and cell["limit"] else "")
+            tds.append(f"<td class='cell{' artifact' if impossible else ''}' "
+                       f"data-run='{cell['id']}'><b>{shown}</b><small>parts</small>{limit}</td>")
+        if margin_col:
+            tds.append(f"<td class='eff'><b>{effect(delivered(rk, ('min',)), delivered(rk, ('max',)))}</b></td>")
+        body.append(f"<tr><th class='rowh'>{_header(bounds, on_rows, rk, False)}</th>"
+                    + "".join(tds) + "</tr>")
+    if margin_row:
+        body.append(
+            f"<tr><th class='rowh'>{escape(on_rows[0])} effect</th>" + "".join(
+                f"<td class='eff'><b>{effect(delivered(('min',), ck), delivered(('max',), ck))}</b></td>"
+                for ck in col_keys
+            ) + ("<td class='eff'></td>" if margin_col else "") + "</tr>"
+        )
+    side = ""
+    if _SHOW_LIMITS and not (margin_col and margin_row) and combos["influence"]:
+        rows = [
+            f"<tr><td><code>{escape(r['component'])}</code></td>"
+            f"<td class='num'>{r['mean']:.1f}</td><td class='num'>{r['smallest']}</td>"
+            f"<td class='num'>{r['largest']}</td></tr>"
+            for r in combos["influence"]
+        ]
+        side = ("<div class='effects'>"
+                + _table(["Station", "Effect [parts]", "Smallest", "Largest"], rows)
+                + "</div>")
+
+    saturated = combos.get("arrivals") == "saturated"
+    if saturated:
+        note = ("Every source releases its next part as soon as there is room. "
+                "The counts are the most the stations can deliver, not the "
+                "throughput at the entered arrivals. "
+                "Each station at its shortest or longest time.")
+    else:
+        note = (f"Arrivals as entered, since {combos.get('arrivals_why') or 'the mix can shift'}"
+                ", each station at its shortest or longest time.")
+    if combos.get("breakdowns_at_means"):
+        note += " Breakdowns at their means."
+    if combos["replications"] > 1:
+        note += f" Each value is the mean of {combos['replications']} runs."
+    if _SHOW_LIMITS:
+        note += (" Margins show each station's effect." if margin_col and margin_row
+                 else " The effect table shows each station's effect, the parts "
+                      "delivered at its lower bound minus at its upper bound.")
+    if hatched:
+        note += " Hatched: a time the plant cannot have."
+    return (
+        f"<h3>{'What limits the line' if _SHOW_LIMITS else 'Parts delivered per combination'}</h3>"
+        + (f"<p class='note'>{escape(note)}</p>" if _SHOW_GRID_NOTE else "")
+        + f"<div class='grid-wrap'><table class='bounds{'' if len(stations) <= 2 else ' compact'}'>{head}{''.join(body)}</table>{side}</div>"
+    )
+
+
+_EXTREME_SCRIPT = """<script>
+document.querySelectorAll('div.extreme').forEach(box => {
+  box.querySelectorAll('.xc-switch button').forEach(button => {
+    button.addEventListener('click', () => {
+      box.querySelectorAll('.xc-switch button').forEach(
+        other => other.setAttribute('aria-pressed', other === button));
+      box.querySelectorAll('.xc-pane').forEach(
+        pane => pane.classList.toggle('active', pane.dataset.m === button.dataset.m));
+    });
+  });
+  const pick = id => box.querySelectorAll('.row').forEach(
+    row => row.classList.toggle('sel', row.dataset.id === id));
+  box.querySelectorAll('.row').forEach(
+    row => row.addEventListener('click', () => pick(row.dataset.id)));
+  box.querySelectorAll('td.cell[data-run]').forEach(cell => {
+    cell.addEventListener('click', () => {
+      pick(cell.dataset.run);
+      const row = box.querySelector('.xc-pane.active .row[data-id="' + cell.dataset.run + '"]');
+      if (row) row.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+    });
+  });
+});
+</script>"""
+
+
+def _extreme_conditions_section(model: FactoryModel, until: float, seed: int | None) -> str:
+    """verify_extreme_conditions on the model: its findings, every run on one
+    axis, and what limits the line at every combination of station bounds."""
+    from simtrace.tools.validation.extreme_conditions import verify_extreme_conditions
+
+    try:
+        result = verify_extreme_conditions(until, seed=seed, model=model)
+    except ValueError as exc:
+        return _tool_section("verify_extreme_conditions", "warn", "not checked",
+                             f"<p>{escape(str(exc))}</p>")
+    errors = [f for f in result["findings"] if f["severity"] == "error"]
+    hints = [f for f in result["findings"] if f["severity"] == "hint"]
+    notes = [f for f in result["findings"] if f["severity"] == "info"]
+    combos = result["combinations"]
+    status = "fail" if errors else "warn" if hints else "pass"
+    summary = (f"{_count(len(errors), 'error')}, {_count(len(hints), 'hint')}, "
+               f"{_count(len(combos['runs']), 'run')} at the bounds")
+
+    parts = [_findings_list("Errors", errors, "fail"), _findings_list("Hints", hints, "warn"),
+             _findings_list("For information", notes, "info")]
+
+    if result["below_floor"]:
+        rows = [
+            f"<tr><td><code>{escape(p['item'])}</code></td><td class='num'>{_num(p['total'])}</td>"
+            f"<td class='num'>{_num(p['route_floor'])}</td><td>{escape(p['cause'])}</td>"
+            f"<td>{escape(' → '.join(p['route']))}</td></tr>"
+            for p in result["below_floor"][:_IMPROPER_SHOWN]
+        ]
+        parts.append(
+            "<h3>Parts quicker than the single part</h3>"
+            + _table(["Part", "Total [min]", "Route floor [min]", "Cause", "Route"], rows)
+        )
+
+    cells = _combination_cells(combos)
+    rows = _ladder_rows(result, cells)
+    if rows:
+        as_built = [r for r in result.get("inputs", {}).get("runs", [])
+                    if r["case"] == "as_built" and not r["failed"]]
+        parts.append(_ladder(rows, as_built))
+    parts.append(_bounds_grid(combos, cells))
+    return _tool_section("verify_extreme_conditions", status, summary,
+                         f"<div class='extreme'>{''.join(parts)}</div>{_EXTREME_SCRIPT}")
+
+
 def render_report(
     model: FactoryModel,
     views: list[dict],
@@ -539,7 +1034,8 @@ def render_report(
             _part_types(views),
         ])),
         ("Validation", _validate_model_section(model)
-         + _item_flow_section(model, requested is None)),
+         + _item_flow_section(model, requested is None)
+         + _extreme_conditions_section(model, until, seed if requested is None else seed_base)),
     ]
     body = _settings_line(len(views), until, seed, seed_base, requested) + _tabbed(tabs)
     title = "Single-Run Report" if requested is None else "Replication Report"

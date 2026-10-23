@@ -651,10 +651,12 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         parts_per_source: int = 1,
         sigmas: float = 3.0,
         quantile: float = 0.99,
+        replications: int = 5,
     ) -> dict:
         """Check every station's time by sending a single part through the model.
 
-        One part is released into a copy of the model, three times over: with
+        One part per source is released into a copy of the model, each source
+        in a copy of its own, three times over: with
         every delay distribution at its lower bound, with the model as built,
         and with every delay at its upper bound. With one part in the plant
         nothing queues, so the time it spends at a station is that station's own
@@ -673,6 +675,32 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         floor no part can beat, since waiting only adds to it — a part below it
         skipped a station, and its route is named.
 
+        Then every station whose time is a distribution is set to its lower or
+        upper bound, in every combination (both corners and each station
+        against the rest past 256 runs), and the model runs `replications`
+        times per combination with its sources as entered, the same seeds in
+        every combination. Reported: a station whose upper bound delivers more
+        parts than its lower bound by more than the spread of the runs
+        explains, a combination that raises, delivers nothing or loses items,
+        and, as a hint, a station that changes no count. `combinations.influence`
+        ranks the stations by how many parts their bounds cost; the top one
+        limits the line.
+
+        Last, three extreme inputs, each with the outcome a real plant would
+        show: no arrivals (0 items created, 0 delivered), every inter-arrival
+        time divided by 10 (output not below the model as built, over the same
+        seeds), and every buffer at 1,000,000 places (no station whose
+        out-edges are all buffers is blocked). `inputs.cases` holds each case,
+        its expectation and its result.
+
+        Then targeted extremes, one run each: every station stopped in turn (a
+        part reaches a sink only on a route that leaves it out), every branch
+        of a route share given every part (the parts end in that branch's sink,
+        counted the way that sink counts them), and with two or more sources
+        each source alone (only its stations work). What a real plant does here
+        depends on the specification, so `targeted.runs` lists each result with
+        the routes the parts took, for the reader to hold against it.
+
         The session model is only read: its clock and its last run's stats are
         left alone for the other verify_* tools.
 
@@ -680,19 +708,25 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             until: end time for each of the three runs; must be a positive
                 number, long enough for a part to reach a sink at the upper
                 bound.
-            seed: RNG seed for the run at the built values.
+            seed: RNG seed for the run at the built values and for the first
+                run of every combination; 0 when not given. Run r of a
+                combination uses seed + r * 1000.
             parts_per_source: items each source releases at time 0. Keep it at
-                1 so nothing queues; raise it only when a combiner needs
-                several items per cycle, and read the times as including
-                waiting.
+                1 so nothing queues. A source that feeds a combiner releases
+                the items the combiner takes from its edge anyway, and the
+                times then include waiting. In a model with a combiner all
+                sources release into the same copy.
             sigmas: how far a normal/gauss reaches each way, in standard
                 deviations. 3 covers all but about 3 draws in 1000.
             quantile: stands in for an exp's missing upper bound.
+            replications: runs per combination. Breakdowns, route shares and
+                several random sources still draw at the bounds, so one run
+                can show a difference that is only noise.
 
         Returns a dict with `summary` (read this first), `passed`, `stations`
         (per place: the value entered, the three measured times, the run's
-        fastest/mean/slowest), `single`, `run`, `below_floor`, `findings`,
-        `substitutions` and `settings`.
+        fastest/mean/slowest), `single`, `run`, `below_floor`,
+        `combinations`, `inputs`, `findings`, `substitutions` and `settings`.
         """
         return validation.verify_extreme_conditions(
             until=until,
@@ -700,6 +734,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
             parts_per_source=parts_per_source,
             sigmas=sigmas,
             quantile=quantile,
+            replications=replications,
         )
 
     @mcp.tool()
