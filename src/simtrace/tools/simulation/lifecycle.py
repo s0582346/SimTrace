@@ -108,6 +108,20 @@ def run_simulation(
             settle = getattr(node, name, None)
             if settle is not None:
                 settle(model.env.now)
+    # An edge updates its average number of items only when an item enters or
+    # leaves. This adds the time from the last move up to `until`. An edge that
+    # is not wired on both ends is skipped, since its update asserts both ends.
+    for edge in model.edges.values():
+        if getattr(edge, "src_node", None) is None or getattr(edge, "dest_node", None) is None:
+            continue
+        for name in (
+            "update_final_buffer_avg_content",
+            "update_final_fleet_avg_content",
+            "update_final_conveyor_avg_content",
+        ):
+            settle = getattr(edge, name, None)
+            if settle is not None:
+                settle(model.env.now)
     combiners = [
         node_id for node_id, node in model.nodes.items()
         if type(node).__name__ == "Combiner"
