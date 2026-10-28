@@ -503,18 +503,24 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         This executes the model: any unmet edge-cardinality requirement (e.g. a
         Source with no out_edge) surfaces here. Returns per-node/edge stats.
 
+        After the run, verify_item_flow, verify_extreme_conditions and
+        verify_time_course run on the model with the same seed. `checks` holds
+        per check its status (pass, warn, fail or not checked), one summary
+        line and its findings. Read the findings against the data sheet.
+
         Args:
             until: simulation end time; must be a positive number.
             seed: optional RNG seed. With a seed, the same freshly built model
                 reproduces the run exactly (identical draws, routing, stats);
-                omit it for a fresh random run. Use distinct seeds to sample
+                omit it for a fresh random run, which then draws a seed and
+                returns it as `seed`. Use distinct seeds to sample
                 several reproducible replications of a stochastic model.
             report_path: optional path of an HTML report, e.g.
                 "out/report.html": the model diagram plus tables of the
                 results. The result then holds `report`, the full path.
         """
         return simulation.run_simulation(
-            until=until, seed=seed, report_path=report_path
+            until=until, seed=seed, report_path=report_path, checks=True
         )
 
     @mcp.tool()
@@ -775,5 +781,39 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         the routes with the plant description.
         """
         return validation.verify_item_flow()
+
+    @mcp.tool()
+    @traced
+    def verify_time_course(until: float, seed: int | None = None) -> dict:
+        """Record when buffers fill and stations stop over one run.
+
+        Builds a copy of the model, runs it with `seed` and samples, 2000
+        times over the run, every edge's level, every station's and source's
+        state (processing, blocked, idle, off_shift, down) and every station's
+        count of finished parts. With the seed of the run_simulation call the
+        copy is that run. The session model is only read.
+
+        `findings` (all hints) name the component and the interval:
+        line_stop (no station finishes a part in [t, until]),
+        no_output_to_end, late_start (first part only after a quarter of the
+        run), blocked_to_end, full_to_end and mostly_full (buffers at
+        capacity), circular_wait (stuck stations and full buffers that close
+        a circle; the message adds a FIRST_AVAILABLE station that takes from
+        a full in-edge before the circle's one), input_starved (a combiner's in-edge empty while another is
+        at capacity) and daily_swing (a buffer's mean level per 1/24 of the
+        shift calendar's cycle swings by 3/4 of its capacity; the message adds
+        how long the node feeding it is blocked per cycle while it is at
+        capacity). A buffer at
+        capacity in front of the slowest station is normal; hold the findings
+        against the data sheet. `stations` gives each state's share of the
+        run, `edges` each buffer's mean and maximum level and its shares full
+        and empty.
+
+        Args:
+            until: end time of the run; must be a positive number. Use the
+                run's until.
+            seed: RNG seed; use the run's seed.
+        """
+        return validation.verify_time_course(until, seed=seed)
 
     return mcp

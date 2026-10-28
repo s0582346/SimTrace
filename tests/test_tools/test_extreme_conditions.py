@@ -27,6 +27,8 @@ from simtrace.tools.validation.extreme_conditions import (
     ENDLESS,
     _check_combinations,
     _check_inputs,
+    _check_stations,
+    _station_rows,
     breakdowns_at_means,
     endless_buffers,
     one_branch,
@@ -386,6 +388,34 @@ def test_parts_of_two_sources_do_not_meet_at_a_shared_station(model):
     assert rows["b_b"][LOWER] == pytest.approx(0)
     assert rows["mac"]["parts"][LOWER] == 2
     assert not any(f["check"] == "time_mismatch" for f in report["findings"])
+
+
+def test_a_part_sent_back_is_measured_per_visit(model):
+    # A test station sends the part back once: it passes the machine and the
+    # test twice. Each visit takes the station's own time, the sums do not.
+    create_source("src", inter_arrival_time="exp(5)", blocking=True, model=model)
+    create_machine("mac", processing_delay="uniform(3, 4)", model=model)
+    create_machine("test", processing_delay="uniform(2, 3)",
+                   route_shares={"b_out": 0.8, "b_back": 0.2}, model=model)
+    create_sink("snk", model=model)
+    for edge_id, src, dest in (("b_in", "src", "mac"), ("b_back", "test", "mac"),
+                               ("b_test", "mac", "test"), ("b_out", "test", "snk")):
+        create_buffer(edge_id, capacity=5, model=model)
+        connect(edge_id, src, dest, model=model)
+    rows = [("b_in", 0, 0), ("mac", 0, 4), ("b_test", 4, 4), ("test", 4, 7),
+            ("b_back", 7, 7), ("mac", 7, 11), ("b_test", 11, 11), ("test", 11, 14),
+            ("b_out", 14, 14)]
+    passes = {setting: {"delivered": {"src": (rows, None)}, "edges": set(model.edges)}
+              for setting in (LOWER, ENTERED, UPPER)}
+
+    stations = {row["id"]: row for row in _station_rows(model.spec, passes, {}, 3.0, 0.99)}
+
+    assert stations["mac"][UPPER] == pytest.approx(4)
+    assert stations["test"][UPPER] == pytest.approx(3)
+    assert stations["mac"]["parts"][UPPER] == 1
+    upper = [f for f in _check_stations(list(stations.values()))
+             if f["check"] == "time_mismatch" and f"{UPPER} setting" in f["message"]]
+    assert upper == []
 
 
 # =========================================================================

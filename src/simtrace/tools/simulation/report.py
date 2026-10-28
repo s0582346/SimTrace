@@ -10,6 +10,16 @@ from html import escape
 from scipy import stats
 
 from simtrace.model import FactoryModel
+from simtrace.tools.simulation.checks import (
+    EXTREME_CONDITIONS,
+    ITEM_FLOW,
+    TIME_COURSE,
+    count as _count,
+    extreme_conditions_status,
+    item_flow_status,
+    run_checks,
+    time_course_status,
+)
 from simtrace.tools.simulation.diagram import diagram_section, page, write_page
 from simtrace.tools.telemetry import _norm_item
 
@@ -128,6 +138,13 @@ details.findings.info summary { color: #2f6fb0; }
 .extreme table.bounds td.eff b { color: #1d1d1f; font-size: 1rem; }
 .extreme .lim { display: inline-block; margin-top: 4px; font-size: 0.72rem; padding: 1px 7px;
   border-radius: 9px; background: #fff; border: 1px solid #dfe2e7; }
+.tcourse svg { display: block; max-width: 100%; height: auto; }
+.tcourse .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  font-size: 0.78rem; color: #5b6370; margin: 4px 0; }
+.tcourse .legend b { min-width: 62px; color: #1d1d1f; font-weight: 600; }
+.tcourse .legend + svg { margin-top: 10px; }
+.tcourse .legend span { display: inline-flex; align-items: center; gap: 5px; }
+.tcourse .legend i { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }
 """
 
 
@@ -434,10 +451,6 @@ def _tabbed(tabs: list[tuple[str, str]]) -> str:
     return f"<nav class='tabs'>{buttons}</nav>{sections}{_TAB_SCRIPT}"
 
 
-def _count(number: int, word: str) -> str:
-    return f"{number} {word}" + ("" if number == 1 else "s")
-
-
 # Checks whose findings carry numbers: a one-line description, the name of
 # the component column, and (details key, column header, unit) per column.
 _DETAIL_TABLES = {
@@ -488,7 +501,7 @@ def _findings_list(title: str, findings: list[dict], kind: str) -> str:
     )
     items = "".join(
         f"<li><code>{escape(f['check'])}</code>"
-        + (f" at <code>{escape(f['component'])}</code>" if f.get("component") else "")
+        + (f" at <b><code>{escape(f['component'])}</code></b>" if f.get("component") else "")
         + f"<br>{escape(f['message'])}</li>"
         for f in listed
     )
@@ -508,6 +521,187 @@ def _tool_section(tool: str, status: str, summary: str, body: str) -> str:
         f"<span class='status {status}'>{escape(summary)}</span></summary>"
         f"{body}</details>"
     )
+
+
+_STATE_COLOR = {
+    "processing": "#1b7f8c",
+    "blocked": "#c27613",
+    "idle": "#e9ebef",
+    "off_shift": "url(#tc-off)",
+    "down": "#a12828",
+}
+_STATE_LABEL = {
+    "processing": "processing",
+    "blocked": "blocked, waits for space",
+    "idle": "idle, waits for a part",
+    "off_shift": "off shift",
+    "down": "broken down",
+}
+# The legend box with the same stripes as the SVG pattern tc-off.
+_OFF_STRIPES = "repeating-linear-gradient(135deg, #6b7686 0 2px, #c9ced6 2px 5px)"
+# Fill and outline of a buffer's level.
+_TC_FILL, _TC_LINE = "#4a6fa5", "#2c4a7a"
+# Legend pictures for a buffer row: a level area and the dashed capacity line.
+_TC_LEVEL_ICON = (
+    "<svg width='30' height='14' viewBox='0 0 30 14'><rect width='30' height='14' "
+    "fill='#f7f8fa'/><polygon points='0,14 0,9 8,9 8,5 18,5 18,8 30,8 30,14' "
+    f"fill='{_TC_FILL}' fill-opacity='0.55' stroke='{_TC_LINE}' stroke-width='0.8'/></svg>"
+)
+_TC_CAPACITY_ICON = (
+    "<svg width='30' height='14' viewBox='0 0 30 14'><line x1='0' x2='30' y1='7' y2='7' "
+    "stroke='#5b6370' stroke-dasharray='3 3' stroke-width='1.2'/></svg>"
+)
+_TC_LEFT, _TC_WIDTH = 150, 780
+
+
+def _tc_step(until: float) -> float:
+    """Distance between two labelled ticks on the time axis, at most ten."""
+    for step in (1, 2, 5, 10, 15, 30, 60, 120, 240, 480, 720, 1440, 2880, 10080):
+        if until / step <= 10:
+            return step
+    return until / 10
+
+
+def _tc_spans(points: list, step: float, until: float) -> list:
+    """(start, end, value) from change points sampled every `step`."""
+    spans = []
+    for k, (time, value) in enumerate(points):
+        start = 0.0 if k == 0 else time - step
+        end = points[k + 1][0] - step if k + 1 < len(points) else until
+        spans.append((start, end, value))
+    return spans
+
+
+def _tc_timeline(result: dict) -> str:
+    until, step = result["until"], result["step"]
+    series = result["series"]
+    marks: dict = {}
+    for f in result["findings"]:
+        start = f["details"].get("from")
+        if f["component"] is not None and start is not None:
+            marks[f["component"]] = min(start, marks.get(f["component"], start))
+
+    def x(time: float) -> float:
+        return _TC_LEFT + _TC_WIDTH * time / until
+
+    top, band, curve, gap = 22, 16, 34, 6
+    parts, y = [], top
+    for cid in result["order"]:
+        is_edge = cid in result["edges"]
+        h = curve if is_edge else band
+        parts.append(f"<text x='{_TC_LEFT - 130}' y='{y + h / 2 + 4}' font-size='12' "
+                     f"font-weight='700' fill='#1d1d1f'>{escape(cid)}</text>")
+        if is_edge:
+            cap = result["edges"][cid]["capacity"]
+            pts = [f"{_TC_LEFT},{y + h}"]
+            for start, end, level in _tc_spans(series["edges"][cid], step, until):
+                yy = y + h - h * min(level, cap) / cap
+                pts += [f"{x(start):.1f},{yy:.1f}", f"{x(end):.1f},{yy:.1f}"]
+            pts.append(f"{_TC_LEFT + _TC_WIDTH},{y + h}")
+            parts += [
+                f"<rect x='{_TC_LEFT}' y='{y}' width='{_TC_WIDTH}' height='{h}' fill='#f7f8fa'/>",
+                f"<polygon points='{' '.join(pts)}' fill='{_TC_FILL}' fill-opacity='0.55' "
+                f"stroke='{_TC_LINE}' stroke-width='0.8'/>",
+                f"<line x1='{_TC_LEFT}' x2='{_TC_LEFT + _TC_WIDTH}' y1='{y}' y2='{y}' "
+                f"stroke='#5b6370' stroke-dasharray='3 3' stroke-width='0.8'/>",
+                f"<text x='{_TC_LEFT + _TC_WIDTH + 6}' y='{y + 9}' font-size='10' "
+                f"fill='#5b6370'>{cap}</text>",
+                f"<text x='{_TC_LEFT + _TC_WIDTH + 6}' y='{y + h}' font-size='10' "
+                f"fill='#5b6370'>0</text>",
+            ]
+        else:
+            for start, end, state in _tc_spans(series["stations"][cid], step, until):
+                parts.append(
+                    f"<rect x='{x(start):.1f}' y='{y}' width='{max(x(end) - x(start), 0.3):.1f}' "
+                    f"height='{h}' fill='{_STATE_COLOR[state]}'><title>{_STATE_LABEL[state]}, "
+                    f"{_number(start)} to {_number(end)}</title></rect>")
+        if cid in marks:
+            mx = x(marks[cid])
+            parts.append(f"<line x1='{mx:.1f}' x2='{mx:.1f}' y1='{y - 2}' y2='{y + h + 2}' "
+                         f"stroke='#a12828' stroke-width='2'/>")
+        y += h + gap
+
+    tick = _tc_step(until)
+    k = 0.0
+    while k <= until + 1e-9:
+        parts.append(f"<line x1='{x(k):.1f}' x2='{x(k):.1f}' y1='{top - 4}' y2='{y}' "
+                     f"stroke='#1d1d1f' stroke-opacity='0.08'/>")
+        parts.append(f"<text x='{x(k):.1f}' y='{top - 8}' font-size='10' fill='#5b6370' "
+                     f"text-anchor='middle'>{k:g}</text>")
+        k += tick
+    parts.append(f"<text x='{_TC_LEFT + _TC_WIDTH / 2}' y='{y + 14}' font-size='10' "
+                 f"fill='#5b6370' text-anchor='middle'>simulated time</text>")
+    defs = ("<defs><pattern id='tc-off' width='6' height='6' patternUnits='userSpaceOnUse' "
+            "patternTransform='rotate(45)'><rect width='6' height='6' fill='#c9ced6'/>"
+            "<line x1='0' y1='0' x2='0' y2='6' stroke='#6b7686' stroke-width='2'/></pattern></defs>")
+    width = _TC_LEFT + _TC_WIDTH + 30
+    return (f"<svg viewBox='0 0 {width} {y + 22}' width='{width}' role='img'>"
+            f"{defs}{''.join(parts)}</svg>")
+
+
+def _tc_cycle(result: dict, edge_id: str) -> str:
+    """One buffer's mean level per 1/24 of the shift calendar's cycle."""
+    cycle, step, until = result["cycle"], result["step"], result["until"]
+    cap = result["edges"][edge_id]["capacity"]
+    width = cycle / 24
+    sums, weights = [0.0] * 24, [0.0] * 24
+    for start, end, level in _tc_spans(result["series"]["edges"][edge_id], step, until):
+        time = start
+        while time < end:
+            b = min(int(time % cycle // width), 23)
+            nxt = min(end, time - time % width + width)
+            sums[b] += level * (nxt - time)
+            weights[b] += nxt - time
+            time = nxt
+    means = [sums[b] / weights[b] if weights[b] else 0.0 for b in range(24)]
+    left, plot, h = _TC_LEFT, 380, 60
+    pts = " ".join(f"{left + plot * (b + 0.5) / 24:.1f},{10 + h - h * m / cap:.1f}"
+                   for b, m in enumerate(means))
+    ticks = "".join(
+        f"<text x='{left + plot * k / 4:.1f}' y='{h + 24}' font-size='10' fill='#5b6370' "
+        f"text-anchor='middle'>{cycle * k / 4:g}</text>" for k in range(5))
+    return (f"<svg viewBox='0 0 {left + plot + 30} {h + 30}' width='{left + plot + 30}'>"
+            f"<text x='{left - 130}' y='{10 + h / 2}' font-size='12' font-weight='700'>"
+            f"{escape(edge_id)}</text>"
+            f"<rect x='{left}' y='10' width='{plot}' height='{h}' fill='#f7f8fa'/>"
+            f"<line x1='{left}' x2='{left + plot}' y1='10' y2='10' stroke='#5b6370' "
+            f"stroke-dasharray='3 3'/>"
+            f"<polyline points='{pts}' fill='none' stroke='{_TC_LINE}' stroke-width='2'/>"
+            f"<text x='{left + plot + 6}' y='18' font-size='10' fill='#5b6370'>{cap}</text>"
+            f"{ticks}</svg>")
+
+
+def _time_course_section(result: dict | str) -> str:
+    """verify_time_course on the model: its hints, the timeline of every
+    station and edge, and the cycle profile of buffers with a daily swing."""
+    if isinstance(result, str):
+        return _tool_section("verify_time_course", "warn", "not checked",
+                             f"<p>{escape(result)}</p>")
+    hints = result["findings"]
+    status, summary = time_course_status(result)
+    # The idle box gets an outline: its grey hardly shows on white.
+    stations = "".join(
+        f"<span><i style='background:{_OFF_STRIPES if c.startswith('url') else c}"
+        f"{';outline:1px solid #c9ced6' if state == 'idle' else ''}'></i>"
+        f"{_STATE_LABEL[state]}</span>" for state, c in _STATE_COLOR.items()
+    )
+    legend = (
+        f"<div class='legend'><b>Stations</b>{stations}</div>"
+        f"<div class='legend'><b>Buffers</b><span>{_TC_LEVEL_ICON}parts in the buffer</span>"
+        f"<span>{_TC_CAPACITY_ICON}capacity</span></div>"
+    )
+    parts = [
+        _findings_list("Hints", hints, "warn") or "<p>No hint.</p>",
+        "<h3>Time course</h3>",
+        legend,
+        _tc_timeline(result),
+    ]
+    swing = [f["component"] for f in hints if f["check"] == "daily_swing"]
+    if swing:
+        parts.append(f"<h3>Mean level over the cycle ({_number(result['cycle'])})</h3>")
+        parts += [_tc_cycle(result, edge_id) for edge_id in swing]
+    return _tool_section("verify_time_course", status, summary,
+                         f"<div class='tcourse'>{''.join(parts)}</div>")
 
 
 def _validate_model_section(model: FactoryModel) -> str:
@@ -535,22 +729,19 @@ def _validate_model_section(model: FactoryModel) -> str:
 _IMPROPER_SHOWN = 20
 
 
-def _item_flow_section(model: FactoryModel, single_run: bool) -> str:
+def _item_flow_section(result: dict | str | None) -> str:
     """verify_item_flow on the last run: wiring check, routes per part type,
-    repeat visits and items not delivered."""
-    from simtrace.tools.validation.item_flow import verify_item_flow
-
-    if not single_run:
+    repeat visits and items not delivered. None stands for run_replications."""
+    if result is None:
         return _tool_section(
             "verify_item_flow", "warn", "not checked",
             "<p>run_replications keeps no item trails. Use run_simulation.</p>",
         )
-    result = verify_item_flow(model=model)
+    if isinstance(result, str):
+        return _tool_section("verify_item_flow", "warn", "not checked",
+                             f"<p>{escape(result)}</p>")
     improper, warnings = result["improper"], result["warnings"]
-    status = "fail" if improper else "warn" if warnings else "pass"
-    summary = f"{result['passed']} of {result['delivered']} delivered items on a wired route"
-    if warnings:
-        summary += f", {_count(len(warnings), 'warning')}"
+    status, summary = item_flow_status(result)
 
     parts = [_findings_list("Warnings", warnings, "warn")]
     if improper:
@@ -971,23 +1162,17 @@ document.querySelectorAll('div.extreme').forEach(box => {
 </script>"""
 
 
-def _extreme_conditions_section(model: FactoryModel, until: float, seed: int | None) -> str:
+def _extreme_conditions_section(result: dict | str) -> str:
     """verify_extreme_conditions on the model: its findings, every run on one
     axis, and what limits the line at every combination of station bounds."""
-    from simtrace.tools.validation.extreme_conditions import verify_extreme_conditions
-
-    try:
-        result = verify_extreme_conditions(until, seed=seed, model=model)
-    except ValueError as exc:
+    if isinstance(result, str):
         return _tool_section("verify_extreme_conditions", "warn", "not checked",
-                             f"<p>{escape(str(exc))}</p>")
+                             f"<p>{escape(result)}</p>")
     errors = [f for f in result["findings"] if f["severity"] == "error"]
     hints = [f for f in result["findings"] if f["severity"] == "hint"]
     notes = [f for f in result["findings"] if f["severity"] == "info"]
     combos = result["combinations"]
-    status = "fail" if errors else "warn" if hints else "pass"
-    summary = (f"{_count(len(errors), 'error')}, {_count(len(hints), 'hint')}, "
-               f"{_count(len(combos['runs']), 'run')} at the bounds")
+    status, summary = extreme_conditions_status(result)
 
     parts = [_findings_list("Errors", errors, "fail"), _findings_list("Hints", hints, "warn"),
              _findings_list("For information", notes, "info")]
@@ -1023,8 +1208,13 @@ def render_report(
     seed: int | None = None,
     seed_base: int | None = None,
     requested: int | None = None,
+    checks: dict | None = None,
 ) -> str:
-    """`requested` is the batch size of run_replications, None for one run."""
+    """`requested` is the batch size of run_replications, None for one run.
+    `checks` holds the results of `run_checks`; without it they are run here."""
+    if checks is None:
+        checks = run_checks(model, until, seed if requested is None else seed_base,
+                            item_flow=requested is None)
     tabs = [
         ("Model", diagram_section(model)),
         ("Output", "".join([
@@ -1034,8 +1224,9 @@ def render_report(
             _part_types(views),
         ])),
         ("Validation", _validate_model_section(model)
-         + _item_flow_section(model, requested is None)
-         + _extreme_conditions_section(model, until, seed if requested is None else seed_base)),
+         + _item_flow_section(checks.get(ITEM_FLOW))
+         + _extreme_conditions_section(checks[EXTREME_CONDITIONS])
+         + _time_course_section(checks[TIME_COURSE])),
     ]
     body = _settings_line(len(views), until, seed, seed_base, requested) + _tabbed(tabs)
     title = "Single-Run Report" if requested is None else "Replication Report"

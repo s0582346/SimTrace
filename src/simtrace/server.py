@@ -65,8 +65,10 @@ Modeling patterns:
   item"): one machine with work_capacity=N. N machines with their own queues:
   N machine nodes, each fed by its own buffer from the upstream node. Set the
   upstream node's out_edge_selection="ROUND_ROBIN" to spread items evenly.
-- Pass seed to run_simulation for a reproducible run. After a run, use
-  verify_conservation and verify_item_flow to catch lost or misrouted items.
+- Pass seed to run_simulation for a reproducible run. Every run_simulation
+  also runs verify_item_flow, verify_extreme_conditions and
+  verify_time_course and returns their findings under `checks`. Read them
+  against the data sheet. Use verify_conservation to catch lost items.
 - Stochastic models (any distribution string, or RANDOM selection): one
   run_simulation is a single sample and can be badly unrepresentative. Before
   quoting throughput or utilization, use run_replications — it runs the model

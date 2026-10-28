@@ -94,8 +94,10 @@ SIGMAS = 3.0
 # exp(x) has no upper bound; this quantile stands in for one.
 QUANTILE = 0.99
 
-# Each station doubles the combinations; 256 is eight stations.
-MAX_COMBINATIONS = 256
+# Each station doubles the combinations; 8 is three stations. From four
+# stations on, the two corners and each station against the rest (2k + 2 runs)
+# are fewer than every combination.
+MAX_COMBINATIONS = 8
 
 # Runs per combination. Replication r uses seed + r * SEED_STRIDE, the same
 # seeds in every combination.
@@ -1647,30 +1649,33 @@ def _station_rows(
 ) -> List[dict]:
     """One row per place a part was seen at: its three times and the run's.
 
+    The times are per visit. A part sent back over a rework loop visits a
+    place again, and each visit is one time. `parts` counts the parts that
+    visited the place.
+
     In front of a node with a setup time, a part that arrives before the setup
     is over waits for the rest of it. A row records that rest per setting for
-    the quickest part as `setup_wait`.
+    the quickest visit as `setup_wait`.
     """
     setups = setups_ahead(spec)
     measured: Dict[str, Dict[str, List[float]]] = {}
     waits: Dict[str, Dict[str, List[float]]] = {}
+    visitors: Dict[str, Dict[str, int]] = {}
     order: List[str] = []
 
     for setting in SETTINGS:
         for rows, _ in passes[setting]["delivered"].values():
-            per_part: Dict[str, float] = {}
-            first_entry: Dict[str, float] = {}
+            for place in dict.fromkeys(place for place, _, _ in rows):
+                counts = visitors.setdefault(place, {})
+                counts[setting] = counts.get(setting, 0) + 1
             for place, entry, leave in rows:
-                per_part[place] = per_part.get(place, 0.0) + leave - entry
-                first_entry.setdefault(place, entry)
-            for place, total in per_part.items():
                 if place not in measured:
                     measured[place] = {}
                     order.append(place)
-                measured[place].setdefault(setting, []).append(total)
+                measured[place].setdefault(setting, []).append(leave - entry)
                 setup = setups[place][1] if place in setups else 0.0
                 waits.setdefault(place, {}).setdefault(setting, []).append(
-                    max(0.0, setup - first_entry[place])
+                    max(0.0, setup - entry)
                 )
 
     from_run: Dict[str, List[float]] = {}
@@ -1707,7 +1712,7 @@ def _station_rows(
                 "entered_run": _fastest(measured[place].get(ENTERED)),
                 UPPER: _fastest(measured[place].get(UPPER)),
                 "parts": {
-                    setting: len(measured[place].get(setting, []))
+                    setting: visitors.get(place, {}).get(setting, 0)
                     for setting in SETTINGS
                 },
                 "run": (

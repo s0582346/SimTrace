@@ -19,6 +19,7 @@ from simtrace.model import FactoryModel
 from simtrace.model import get_model as get_session_model
 from simtrace.model import reset_model as reset_session_model
 from simtrace.tools.builders.part_types import part_type_names, part_type_report
+from simtrace.tools.simulation.checks import check_summary, run_checks
 from simtrace.tools.telemetry import build_item_paths, traced_stdout
 from simtrace.tools.utils import require_positive_number
 
@@ -56,6 +57,7 @@ def run_simulation(
     *,
     model: FactoryModel | None = None,
     report_path: str | None = None,
+    checks: bool = False,
 ) -> dict:
     """Run the simulation up to time `until` and return a stats summary.
 
@@ -78,6 +80,15 @@ def run_simulation(
     scrap=True count as scrapped. A machine with time_to_failure also reports
     num_breakdowns, time_down and BREAKDOWN_STATE. A machine or source with a
     calendar also reports time_off_shift, its time outside the windows.
+
+    With `checks=True`, verify_item_flow, verify_extreme_conditions and
+    verify_time_course run on the model after the run, with the same seed.
+    The result's `checks` then holds per check its status (pass, warn, fail
+    or not checked), one summary line and its findings. Without a seed the
+    run draws one, uses it for the checks too, and returns it as `seed`. The
+    MCP tool sets `checks`.
+    It stays False here, because those checks and run_replications call this
+    function on their copies.
     """
     model = model if model is not None else get_session_model()
 
@@ -85,6 +96,11 @@ def run_simulation(
     # bool is an int subclass; exclude it so True/False aren't accepted as a seed.
     if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
         raise ValueError(f"seed must be an int or None (got {seed!r}).")
+    if seed is None and checks:
+        # The checks rerun the model on copies. Without a shared seed their
+        # runs would not be this one. Not for checks=False: run_replications
+        # seeds the global module itself and then passes None.
+        seed = random.SystemRandom().randrange(2**31)
     if seed is not None:
         # Global module on purpose: the vendored FactorySimPy draws from the
         # global functions too (e.g. RANDOM edge selection), and a private
@@ -147,10 +163,14 @@ def run_simulation(
     }
     if part_type_names(model):
         summary["part_types"] = part_type_report(model)
+    results = run_checks(model, until, seed) if checks else None
+    if results is not None:
+        summary["checks"] = check_summary(results)
     if report_path is not None:
         from simtrace.tools.simulation.report import report_view, write_report
 
         summary["report"] = write_report(
-            report_path, model, [report_view(summary, model)], until, seed=seed
+            report_path, model, [report_view(summary, model)], until, seed=seed,
+            checks=results,
         )
     return summary

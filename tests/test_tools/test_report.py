@@ -159,6 +159,59 @@ def test_part_type_table(tmp_path):
     assert "<code>shaft</code>" in html
 
 
+def test_run_simulation_runs_no_checks_by_default():
+    result = _quiet(run_simulation, 100, seed=1, model=_line())
+    assert "checks" not in result
+
+
+def test_run_simulation_with_checks_returns_each_check_once():
+    result = _quiet(run_simulation, 100, seed=1, model=_line(), checks=True)
+    checks = result["checks"]
+    assert list(checks) == ["verify_item_flow", "verify_extreme_conditions",
+                            "verify_time_course"]
+    assert all(c["status"] in ("pass", "warn", "fail") for c in checks.values())
+    assert checks["verify_item_flow"]["improper"] == []
+
+
+def test_run_simulation_with_checks_draws_a_seed_and_shares_it():
+    from simtrace.tools.simulation.checks import TIME_COURSE
+
+    seen = {}
+    from simtrace.tools.simulation import lifecycle
+    real = lifecycle.run_checks
+
+    def spy(model, until, seed, **kwargs):
+        seen["seed"] = seed
+        return real(model, until, seed, **kwargs)
+
+    lifecycle.run_checks = spy
+    try:
+        result = _quiet(run_simulation, 100, model=_line(), checks=True)
+    finally:
+        lifecycle.run_checks = real
+    assert isinstance(result["seed"], int)
+    assert seen["seed"] == result["seed"]
+    assert TIME_COURSE in result["checks"]
+
+
+def test_a_line_stop_is_added_to_no_influence_hints():
+    from simtrace.tools.simulation.checks import (
+        EXTREME_CONDITIONS, TIME_COURSE, _note_line_stop,
+    )
+
+    results = {
+        TIME_COURSE: {"findings": [{"check": "line_stop", "details": {"from": 909.6}}]},
+        EXTREME_CONDITIONS: {"findings": [
+            {"check": "no_influence", "message": "'m' changes nothing."},
+            {"check": "zero_possible", "message": "'m' can take 0."},
+        ]},
+    }
+    _note_line_stop(results)
+    no_influence, zero = results[EXTREME_CONDITIONS]["findings"]
+    assert "line_stop from 909.6 on" in no_influence["message"]
+    assert zero["message"] == "'m' can take 0."
+
+
 def test_report_view_keeps_numbers_and_states_only():
     result = _quiet(run_simulation, 100, seed=1, model=_line())
     view = report_view(result)
@@ -215,7 +268,7 @@ def test_validation_tab_lists_warnings_in_a_toggle(tmp_path):
     tab = _validation_tab(target.read_text(encoding="utf-8"))
     assert "<span class='status warn'>0 errors, 1 warning</span>" in tab
     assert "<summary>Warnings (1)</summary>" in tab
-    assert "<code>unused_calendar</code> at <code>spare</code>" in tab
+    assert "<code>unused_calendar</code> at <b><code>spare</code></b>" in tab
     assert "Errors (" not in tab
 
 
@@ -233,7 +286,8 @@ def test_overload_warning_is_a_table(tmp_path):
     tab = _validation_tab(target.read_text(encoding="utf-8"))
     assert "<th>Machine</th><th class='num'>Effective process time [min]</th>" in tab
     assert "<td><code>m</code></td><td class='num'>5.00</td><td class='num'>3.00</td><td class='num'>167%</td>" in tab
-    assert "<li>" not in tab
+    validate_model_part = tab.split("<code>verify_item_flow</code>")[0]
+    assert "<li>" not in validate_model_part
 
 
 def test_validation_tab_has_item_flow_toggle(tmp_path):

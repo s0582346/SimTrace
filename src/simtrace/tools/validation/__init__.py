@@ -15,15 +15,18 @@ One reads the model's own parameters back off a run:
     its upper bound, and by holding every part of the last run against the
     single part's total.
 
-The other two are dynamic and inspect what a *completed* run did:
+The other three are dynamic and inspect what a *completed* run did:
 
   - `conservation.verify_conservation` — "are all generated items accounted
     for?" via a mass-balance over the nodes' and edges' ground-truth counters.
   - `item_flow.verify_item_flow` — "did each delivered item travel a complete
     wired route?" by replaying the node/edge trail of every item that reached a
     sink against the wiring, Source to Sink.
+  - `time_course.verify_time_course` - "when do buffers fill and stations
+    stop?" by recording every edge's level and every station's state over a
+    copy of the run.
 
-This package re-exports all four so `from simtrace.tools.validation import ...`
+This package re-exports all five so `from simtrace.tools.validation import ...`
 and `validation.<tool>` keep working as a single tool surface.
 """
 
@@ -33,10 +36,12 @@ from simtrace.tools.validation.conservation import verify_conservation
 from simtrace.tools.validation.extreme_conditions import verify_extreme_conditions
 from simtrace.tools.validation.item_flow import verify_item_flow
 from simtrace.tools.validation.model_check import validate_model
+from simtrace.tools.validation.time_course import verify_time_course
 
 __all__ = [
     "validate_model",
     "verify_conservation",
     "verify_item_flow",
     "verify_extreme_conditions",
+    "verify_time_course",
 ]
