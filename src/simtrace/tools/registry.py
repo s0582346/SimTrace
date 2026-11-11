@@ -816,4 +816,47 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         """
         return validation.verify_time_course(until, seed=seed)
 
+    @mcp.tool()
+    @traced
+    def verify_dimensions(
+        time_unit: str,
+        figures: list[dict],
+        length_unit: str = "m",
+    ) -> dict:
+        """Check that every figure of the data sheet reached the model in the model's units.
+
+        Call it after building. Copy each figure from the sheet text with the
+        unit the sheet gives, not from the model: the tool converts it to the
+        model's units and compares it with the value you built.
+
+        Args:
+            time_unit: the unit the model's times are in: s, min, h or d.
+            figures: one dict per sheet figure, {"component": <id>, "field":
+                <create_* argument>, "sheet": <figure as the sheet writes it>}.
+                Examples: {"component": "src", "field": "inter_arrival_time",
+                "sheet": "exp(12 /h)"}, {"component": "testing", "field":
+                "processing_delay", "sheet": "uniform(120 s, 180 s)"},
+                {"component": "belt", "field": "speed", "sheet": "0.1 m/s"},
+                {"component": "shifts", "field": "windows", "sheet":
+                "[[0 h, 8 h]]"}. Units: s, min, h, d, mm, cm, m, products and
+                quotients (m/s, 1/h, 5 * 8 h), and compound figures
+                (2 h 30 min). Words like parts or pallets
+                carry no unit, so "12 parts/h" is a rate. Distributions:
+                uniform, normal, exp, with a unit on each argument.
+            length_unit: the unit of lengths in the model: mm, cm or m.
+
+        A rate for a time field is inverted (a constant anywhere; exp in
+        inter_arrival_time, time_to_failure and repair_time) and passes with
+        converted_from_rate when the model holds the mean. `findings`:
+        unit_mismatch and wrong_dimension (with the likely cause, e.g. "value
+        in s instead of min"), value_mismatch (a count such as capacity
+        differs), unknown_entry (no such
+        component or field), not_invertible, incompatible_dimension,
+        invalid_figure, and hints undeclared (a time or length in the model
+        with no sheet figure). `checked` has one row per figure.
+        """
+        return validation.verify_dimensions(
+            time_unit=time_unit, figures=figures, length_unit=length_unit
+        )
+
     return mcp

@@ -26,13 +26,20 @@ The other three are dynamic and inspect what a *completed* run did:
     stop?" by recording every edge's level and every station's state over a
     copy of the run.
 
-This package re-exports all five so `from simtrace.tools.validation import ...`
+One compares the data sheet with the model:
+
+  - `dimensions.verify_dimensions` - "did every sheet figure reach the model
+    in the model's units?" by converting each figure, as the sheet writes it
+    with its unit, and comparing it with the build log.
+
+This package re-exports all six so `from simtrace.tools.validation import ...`
 and `validation.<tool>` keep working as a single tool surface.
 """
 
 from __future__ import annotations
 
 from simtrace.tools.validation.conservation import verify_conservation
+from simtrace.tools.validation.dimensions import verify_dimensions
 from simtrace.tools.validation.extreme_conditions import verify_extreme_conditions
 from simtrace.tools.validation.item_flow import verify_item_flow
 from simtrace.tools.validation.model_check import validate_model
@@ -44,4 +51,5 @@ __all__ = [
     "verify_item_flow",
     "verify_extreme_conditions",
     "verify_time_course",
+    "verify_dimensions",
 ]
