@@ -14,6 +14,17 @@ Discrete-event material-flow simulation tools (FactorySimPy): active nodes
 (source/machine/splitter/combiner/sink) wired by passive edges
 (buffer/conveyor/fleet), then run and verify.
 
+Findings: every error, warning and hint from validate_model, verify_* and
+the `checks` of run_simulation points at something in the model that may
+not match the plant. For each one:
+1. Say what it means for this plant, in the data sheet's words.
+2. Hold it against the data sheet. Either the sheet explains it (then
+   quote the line), or it points at a modelling error.
+3. For a modelling error, suggest the fix: which create_* or connect call
+   changes, and how.
+In the final answer, list every finding with this verdict. Do not report
+results as settled while a finding is unexplained.
+
 Modeling patterns:
 - Part types: create_source(part_type=<name>, attributes={...}) stamps the
   type and its attributes on every item the Source releases. run_simulation
