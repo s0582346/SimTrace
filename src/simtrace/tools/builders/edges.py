@@ -189,7 +189,9 @@ def create_fleet(
             Constant (int/float) or a distribution string sampled each cycle:
             "uniform(a, b)", "normal(m, s)", "gauss(m, s)", "exp(x)" (exp mean
             = x). Samples are clamped to >= 0.
-        transit_delay: src->dest travel time. Same forms as `delay`.
+        transit_delay: one drive between src and dest. Same forms as `delay`.
+            Each trip takes it twice: the empty drive to src and the loaded
+            drive to dest.
 
     Returns a summary dict echoing the stored parameters.
     """
@@ -197,6 +199,13 @@ def create_fleet(
 
     require_unique_id(id, model)
     require_positive_int("capacity", capacity)
+    # A fleet that waits 0 before leaving checks again at the same moment
+    # without end, and the run never finishes.
+    if isinstance(delay, (int, float)) and not isinstance(delay, bool) and delay <= 0:
+        raise ValueError(
+            f"delay must be greater than 0 (got {delay}): a fleet that waits 0 "
+            "never lets the run finish. Give the longest time it waits for a full load."
+        )
     resolved_delay = resolve_delay("delay", delay)
     resolved_transit = resolve_delay("transit_delay", transit_delay)
 

@@ -228,6 +228,11 @@ def test_fleet_zero_capacity_rejected(model):
         create_fleet("flt1", capacity=0, model=model)
 
 
+def test_fleet_zero_wait_rejected(model):
+    with pytest.raises(ValueError, match="greater than 0"):
+        create_fleet("flt1", capacity=1, delay=0, model=model)
+
+
 def test_fleet_bool_capacity_rejected(model):
     with pytest.raises(ValueError, match="capacity must be an int"):
         create_fleet("flt1", capacity=True, model=model)

@@ -11,6 +11,7 @@ from simtrace.model import FactoryModel
 from simtrace.tools.builders import (
     create_buffer,
     create_combiner,
+    create_fleet,
     create_machine,
     create_sink,
     create_source,
@@ -203,6 +204,22 @@ def test_every_station_takes_the_time_it_was_given(model):
     assert stations["bath"][LOWER] == pytest.approx(11.0, abs=0.011)
     assert stations["bath"][UPPER] == pytest.approx(29.0, abs=0.011)
     assert report["passed"] is True
+
+
+@pytest.mark.parametrize("capacity, stay", [(1, 2.0), (2, 2.5)])
+def test_a_fleet_takes_its_transit_time_twice(model, capacity, stay):
+    create_source("src", inter_arrival_time=5, blocking=True, model=model)
+    create_buffer("b", capacity=2, model=model)
+    create_machine("load", processing_delay=0.5, model=model)
+    create_fleet("truck", capacity=capacity, delay=0.5, transit_delay=1, model=model)
+    create_sink("dock", model=model)
+    connect("b", "src", "load", model=model)
+    connect("truck", "load", "dock", model=model)
+    report = verify_extreme_conditions(60, model=model)
+
+    truck = {row["id"]: row for row in report["stations"]}["truck"]
+    assert truck[LOWER] == pytest.approx(stay, abs=0.011)
+    assert "time_mismatch" not in [f["check"] for f in report["findings"]]
 
 
 def test_the_part_is_quickest_at_the_lower_bound(model):

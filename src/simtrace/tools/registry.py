@@ -384,7 +384,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
                 capacity. Constant (int/float) or a distribution string sampled
                 each cycle: "uniform(a, b)", "normal(m, s)", "gauss(m, s)",
                 "exp(x)" (exp mean = x); samples clamped to >= 0.
-            transit_delay: src->dest travel time. Same forms as `delay`.
+            transit_delay: one drive between src and dest. Same forms as
+                `delay`. Each trip takes it twice: the empty drive to src
+                and the loaded drive to dest.
         """
         return builders.create_fleet(
             id=id,

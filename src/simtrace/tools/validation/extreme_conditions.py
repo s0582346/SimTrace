@@ -551,6 +551,27 @@ def _entered_value(spec: Sequence[Dict[str, Any]], component: str) -> Optional[A
     return None
 
 
+def _fleet_stay(kwargs: Dict[str, Any], sigmas: float, quantile: float) -> Tuple[str, dict]:
+    """How long one part stays in a fleet, as text and as low and high bounds.
+
+    FactorySimPy's fleet takes transit_delay twice per trip: the empty drive to
+    the source and the loaded drive to the destination. A fleet of capacity 1
+    leaves as soon as the part is in. A larger fleet with one part waits its
+    full delay first.
+    """
+    transit = kwargs.get("transit_delay") or 0
+    delay = kwargs.get("delay", 1)
+    capacity = kwargs.get("capacity", 1)
+    t_low, t_high, t_capped = bounds(transit, sigmas, quantile)
+    low, high, capped = 2 * t_low, 2 * t_high, t_capped
+    text = f"2 x transit_delay {transit}"
+    if capacity != 1:
+        d_low, d_high, d_capped = bounds(delay, sigmas, quantile)
+        low, high, capped = low + d_low, high + d_high, capped or d_capped
+        text = f"delay {delay} + {text}"
+    return text, {"low": low, "high": high, "capped": capped}
+
+
 def _one_pass(
     spec: Sequence[Dict[str, Any]],
     setting: str,
@@ -1688,11 +1709,18 @@ def _station_rows(
             order.append(place)
 
     edges = passes[ENTERED]["edges"]
+    fleets = {
+        step["kwargs"]["id"]: step["kwargs"]
+        for step in spec
+        if step["op"] == "create_fleet" and "id" in step["kwargs"]
+    }
     rows_out: List[dict] = []
     for place in order:
         entered = _entered_value(spec, place)
         limits = None
-        if entered is not None:
+        if place in fleets:
+            entered, limits = _fleet_stay(fleets[place], sigmas, quantile)
+        elif entered is not None:
             low, high, capped = bounds(entered, sigmas, quantile)
             limits = {"low": low, "high": high, "capped": capped}
         seen = from_run.get(place, [])
