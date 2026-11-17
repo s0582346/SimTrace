@@ -12,7 +12,7 @@ another unit:
 
 import pytest
 
-from simtrace.model import FactoryModel
+from simtrace.model import FactoryModel, configure_units
 from simtrace.tools.builders import (
     create_buffer,
     create_conveyor,
@@ -21,6 +21,14 @@ from simtrace.tools.builders import (
     create_source,
 )
 from simtrace.tools.simulation import connect, run_simulation
+from simtrace.tools.simulation.report import _per_hour
+from simtrace.tools.units import TIME_UNITS
+
+
+@pytest.fixture(autouse=True)
+def _units():
+    yield
+    configure_units(False)
 
 
 @pytest.mark.parametrize("length, item", [(6, 0.3), (8, 0.4), (6.5, 0.3), (1, 0.1), (3, 0.7)])
@@ -33,6 +41,15 @@ def test_places_on_a_belt_have_no_dimension(length, item, unit_factor):
         "a", conveyor_length=length * unit_factor, speed=1,
         item_length=item * unit_factor, model=FactoryModel())["capacity"]
     assert in_m == in_smaller
+
+
+@pytest.mark.parametrize("unit", list(TIME_UNITS))
+def test_throughput_per_hour_does_not_depend_on_the_model_time_unit(unit):
+    """A rate [1/time] over a run of one hour, written in any model time unit."""
+    configure_units(False, time_unit=unit)
+    one_hour = 3600.0 / TIME_UNITS[unit]
+    assert _per_hour(12, one_hour) == pytest.approx(12)
+    assert _per_hour(12, 2 * one_hour) == pytest.approx(6)
 
 
 def belt_time(length, item, speed):

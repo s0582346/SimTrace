@@ -16,7 +16,12 @@ import simpy
 class FactoryModel:
     """The mutable graph the tools assemble: env + node/edge registries."""
 
-    def __init__(self) -> None:
+    def __init__(self, strict_units: bool = False, time_unit: str = "min",
+                 length_unit: str = "m") -> None:
+        self.strict_units = strict_units # True: time, length and speed arguments need a unit (see tools.units)
+        self.time_unit = time_unit # the unit model times are kept in
+        self.length_unit = length_unit # the unit model lengths are kept in
+        self.written: dict[str, dict[str, object]] = {} # component id -> {argument: text as written with its unit}, strict_units only
         self.env = simpy.Environment()
         self.nodes: dict[str, object] = {}
         self.edges: dict[str, object] = {}
@@ -62,17 +67,40 @@ class FactoryModel:
 
 _model: FactoryModel | None = None
 
+# Unit settings of every new session model. Set once by the server at start
+# (SIMTRACE_STRICT_UNITS, SIMTRACE_TIME_UNIT, SIMTRACE_LENGTH_UNIT); no tool
+# changes them.
+_unit_settings: dict = {"strict_units": False, "time_unit": "min", "length_unit": "m"}
+
+
+def configure_units(strict_units: bool, time_unit: str = "min", length_unit: str = "m") -> None:
+    """Set the unit settings for every session model made from now on."""
+    from simtrace.tools.units import LENGTH_UNITS, TIME_UNITS
+
+    if time_unit not in TIME_UNITS:
+        raise ValueError(f"time unit must be one of {', '.join(TIME_UNITS)} (got {time_unit!r}).")
+    if length_unit not in LENGTH_UNITS:
+        raise ValueError(
+            f"length unit must be one of {', '.join(LENGTH_UNITS)} (got {length_unit!r})."
+        )
+    _unit_settings.update(strict_units=bool(strict_units), time_unit=time_unit,
+                          length_unit=length_unit)
+
+
+def unit_settings() -> dict:
+    return dict(_unit_settings)
+
 
 def get_model() -> FactoryModel:
     """Return the current session model, creating it on first use."""
     global _model
     if _model is None:
-        _model = FactoryModel()
+        _model = FactoryModel(**_unit_settings)
     return _model
 
 
 def reset_model() -> FactoryModel:
     """Discard the current model and start a fresh one."""
     global _model
-    _model = FactoryModel()
+    _model = FactoryModel(**_unit_settings)
     return _model

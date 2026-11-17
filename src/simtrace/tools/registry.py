@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from simtrace.tools import builders, simulation, validation
+from simtrace.tools import builders, simulation, units, validation
 from simtrace.tools.telemetry import traced
 
 
@@ -22,14 +22,15 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_source")
     def create_source(
         id: str,
         inter_arrival_time: float | str = 1.0,
         flow_item_type: str = "item",
-        item_length: float = 1,
+        item_length: float | str = 1,
         blocking: bool = False,
         out_edge_selection: str = "FIRST_AVAILABLE",
-        node_setup_time: float = 0,
+        node_setup_time: float | str = 0,
         part_type: str | None = None,
         attributes: dict[str, str | int | float | bool] | None = None,
         calendar: str | None = None,
@@ -89,9 +90,10 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_sink")
     def create_sink(
         id: str,
-        node_setup_time: float = 0,
+        node_setup_time: float | str = 0,
         scrap: bool = False,
     ) -> dict:
         """Create a Sink node that collects flow items at the end of the line.
@@ -114,6 +116,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_machine")
     def create_machine(
         id: str,
         work_capacity: int = 1,
@@ -121,7 +124,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         blocking: bool = True,
         in_edge_selection: str = "FIRST_AVAILABLE",
         out_edge_selection: str = "FIRST_AVAILABLE",
-        node_setup_time: float = 0,
+        node_setup_time: float | str = 0,
         route_by: str | None = None,
         routes: dict[str, str | list[str]] | None = None,
         route_shares: dict[str, float] | None = None,
@@ -208,6 +211,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_splitter")
     def create_splitter(
         id: str,
         mode: str = "UNPACK",
@@ -216,7 +220,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         blocking: bool = True,
         in_edge_selection: str = "FIRST_AVAILABLE",
         out_edge_selection: str = "FIRST_AVAILABLE",
-        node_setup_time: float = 0,
+        node_setup_time: float | str = 0,
         pallet_edge: str | None = None,
     ) -> dict:
         """Create a Splitter node that emits several items from one incoming item.
@@ -261,13 +265,14 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_combiner")
     def create_combiner(
         id: str,
         target_quantity_of_each_item: list[int] | None = None,
         processing_delay: float | str = 0,
         blocking: bool = True,
         out_edge_selection: str = "FIRST_AVAILABLE",
-        node_setup_time: float = 0,
+        node_setup_time: float | str = 0,
     ) -> dict:
         """Create a Combiner node that packs items from several in_edges into one.
 
@@ -303,6 +308,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_buffer")
     def create_buffer(
         id: str,
         capacity: int = 1,
@@ -333,11 +339,12 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_conveyor")
     def create_conveyor(
         id: str,
-        conveyor_length: float,
-        speed: float,
-        item_length: float,
+        conveyor_length: float | str,
+        speed: float | str,
+        item_length: float | str,
         accumulating: bool = False,
     ) -> dict:
         """Create a ConveyorBelt edge that moves items along a belt.
@@ -366,6 +373,7 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_fleet")
     def create_fleet(
         id: str,
         capacity: int = 1,
@@ -397,10 +405,11 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict("create_shift_calendar")
     def create_shift_calendar(
         id: str,
-        cycle: float,
-        windows: list[list[float]],
+        cycle: float | str,
+        windows: list[list[float | str]],
         default: bool = False,
     ) -> dict:
         """Create a shift calendar: working windows that repeat every cycle.
@@ -497,8 +506,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict(extra=units.UNTIL)
     def run_simulation(
-        until: float, seed: int | None = None, report_path: str | None = None
+        until: float | str, seed: int | None = None, report_path: str | None = None
     ) -> dict:
         """Run the simulation up to time `until` and return a stats summary.
 
@@ -527,8 +537,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict(extra=units.UNTIL)
     def run_replications(
-        until: float,
+        until: float | str,
         replications: int = 10,
         random_seed_base: int = 0,
         report_path: str | None = None,
@@ -579,8 +590,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict(extra=units.UNTIL)
     def find_replication_count(
-        until: float,
+        until: float | str,
         target_metrics: list[str] | None = None,
         desired_precision: float = 0.10,
         replication_budget: int = 50,
@@ -653,8 +665,9 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
+    @units.strict(extra=units.UNTIL)
     def verify_extreme_conditions(
-        until: float,
+        until: float | str,
         seed: int | None = None,
         parts_per_source: int = 1,
         sigmas: float = 3.0,
@@ -786,7 +799,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
     @mcp.tool()
     @traced
-    def verify_time_course(until: float, seed: int | None = None) -> dict:
+    @units.strict(extra=units.UNTIL)
+    def verify_time_course(until: float | str, seed: int | None = None) -> dict:
         """Record when buffers fill and stations stop over one run.
 
         Builds a copy of the model, runs it with `seed` and samples, 2000

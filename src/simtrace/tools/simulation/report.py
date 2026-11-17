@@ -9,7 +9,7 @@ from html import escape
 
 from scipy import stats
 
-from simtrace.model import FactoryModel
+from simtrace.model import FactoryModel, unit_settings
 from simtrace.tools.simulation.checks import (
     EXTREME_CONDITIONS,
     ITEM_FLOW,
@@ -22,6 +22,18 @@ from simtrace.tools.simulation.checks import (
 )
 from simtrace.tools.simulation.diagram import diagram_section, page, write_page
 from simtrace.tools.telemetry import _norm_item
+
+
+def _tu() -> str:
+    """The unit model times are in, from the server's unit settings."""
+    return unit_settings()["time_unit"]
+
+
+def _per_hour(count: float, until: float) -> float:
+    """`count` over a run of `until` model time units, per hour."""
+    from simtrace.tools.units import TIME_UNITS
+
+    return count / until * 3600.0 / TIME_UNITS[_tu()]
 
 # Column -> the state names that count for it. Machines use the first name,
 # splitters and combiners the second, sources GENERATING_STATE and
@@ -299,7 +311,7 @@ def _output(model: FactoryModel, views: list[dict], until: float) -> str:
             count = stats_.get("num_item_received", 0)
             cycle = stats_.get("total_cycle_time", 0.0)
             received.append(count)
-            per_hour.append(60 * count / until)
+            per_hour.append(_per_hour(count, until))
             if count == 0 or cycle <= 0:
                 continue
             times = view.get("item_times", {}).get(sink, {})
@@ -323,7 +335,7 @@ def _output(model: FactoryModel, views: list[dict], until: float) -> str:
         rows.append(f"<tr><td>{name}</td>{''.join(cells)}</tr>")
     if not rows:
         return ""
-    head = ["Sink", "Throughput [parts]", "Per hour [parts/h]", "Mean throughput time [min]",
+    head = ["Sink", "Throughput [parts]", "Per hour [parts/h]", f"Mean throughput time [{_tu()}]",
             "Production [%]", "Transport [%]", "Storage [%]"]
     return "<h2>Output</h2>" + _table(head, rows)
 
@@ -458,8 +470,8 @@ _DETAIL_TABLES = {
         "Machines that get more parts than they can finish.",
         "Machine",
         [
-            ("effective_process_time", "Effective process time [min]", "time"),
-            ("interarrival_time", "Interarrival time [min]", "time"),
+            ("effective_process_time", "Effective process time [{time_unit}]", "time"),
+            ("interarrival_time", "Interarrival time [{time_unit}]", "time"),
             ("utilization", "Utilization [%]", "share"),
         ],
     ),
@@ -482,7 +494,8 @@ def _detail_table(check: str, findings: list[dict]) -> str:
         for f in findings
     )
     head = "".join(
-        f"<th class='num'>{escape(header)}</th>" for _, header, _ in columns
+        f"<th class='num'>{escape(header.format(time_unit=_tu()))}</th>"
+        for _, header, _ in columns
     )
     return (
         f"<p class='check'><code>{escape(check)}</code> {escape(description)}</p>"
@@ -1186,7 +1199,7 @@ def _extreme_conditions_section(result: dict | str) -> str:
         ]
         parts.append(
             "<h3>Parts quicker than the single part</h3>"
-            + _table(["Part", "Total [min]", "Route floor [min]", "Cause", "Route"], rows)
+            + _table(["Part", f"Total [{_tu()}]", f"Route floor [{_tu()}]", "Cause", "Route"], rows)
         )
 
     cells = _combination_cells(combos)

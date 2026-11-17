@@ -36,19 +36,25 @@ def reset_model() -> dict:
     Unlike the other lifecycle tools, this always operates on the shared session
     model (there is nothing to reset in a caller-supplied one).
 
+    The new model keeps the server's unit settings (see model.configure_units).
+
     Returns a summary of what was cleared and the reset clock.
     """
     old = get_session_model()
     cleared_nodes = len(old.nodes)
     cleared_edges = len(old.edges)
 
-    reset_session_model()
+    new = reset_session_model()
 
-    return {
+    result = {
         "cleared_nodes": cleared_nodes,
         "cleared_edges": cleared_edges,
         "now": 0,
     }
+    if new.strict_units:
+        result["time_unit"] = new.time_unit
+        result["length_unit"] = new.length_unit
+    return result
 
 
 def run_simulation(

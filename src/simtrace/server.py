@@ -5,6 +5,7 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
+from simtrace.model import configure_units
 from simtrace.tools.registry import register_tools
 from simtrace.tools.telemetry import configure_telemetry
 
@@ -83,7 +84,46 @@ Modeling patterns:
   settled instead of quoting the mean as if it were.
 """
 
-mcp = FastMCP("simpy_blocks", instructions=INSTRUCTIONS)
+STRICT_UNITS_ENV = "SIMTRACE_STRICT_UNITS"
+TIME_UNIT_ENV = "SIMTRACE_TIME_UNIT"
+LENGTH_UNIT_ENV = "SIMTRACE_LENGTH_UNIT"
+
+UNITS_BLOCK = """\
+Units: every time, length and speed argument of the create_* tools and every
+`until` is written with its unit, as the data sheet gives it, e.g.
+"uniform(50 s, 75 s)", "1.5 km/h", "8 h". A setting calculated from several
+sheet values is written as the calculation. Counts and shares are plain
+numbers. A rate is not a time: write the inversion, e.g. "1 / (40 /d)". A call
+whose argument has the wrong dimension is refused.
+Results are in {time_unit} and {length_unit}.
+
+"""
+
+
+def _units_from_env() -> dict:
+    """The unit settings from the environment. Strict units are on for 1, true,
+    yes or on."""
+    flag = os.environ.get(STRICT_UNITS_ENV, "").strip().lower()
+    return {
+        "strict_units": flag in ("1", "true", "yes", "on"),
+        "time_unit": os.environ.get(TIME_UNIT_ENV, "").strip() or "min",
+        "length_unit": os.environ.get(LENGTH_UNIT_ENV, "").strip() or "m",
+    }
+
+
+def _instructions(settings: dict) -> str:
+    """INSTRUCTIONS, with the units block before the modeling patterns when
+    strict units are on."""
+    if not settings["strict_units"]:
+        return INSTRUCTIONS
+    anchor = "Modeling patterns:\n"
+    block = UNITS_BLOCK.format(**settings)
+    return INSTRUCTIONS.replace(anchor, block + anchor, 1)
+
+
+_settings = _units_from_env()
+configure_units(**_settings)
+mcp = FastMCP("simpy_blocks", instructions=_instructions(_settings))
 register_tools(mcp)
 
 
