@@ -28,9 +28,9 @@ The other three are dynamic and inspect what a *completed* run did:
 
 One compares the data sheet with the model:
 
-  - `dimensions.verify_dimensions` - "did every sheet figure reach the model
-    in the model's units?" by converting each figure, as the sheet writes it
-    with its unit, and comparing it with the build log.
+  - `dimensions.verify_dimensions` - "does every sheet figure have the
+    dimension of the model field it went into?" by reading each figure, as
+    the sheet writes it with its unit.
 
 This package re-exports all six so `from simtrace.tools.validation import ...`
 and `validation.<tool>` keep working as a single tool surface.

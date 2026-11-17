@@ -72,6 +72,10 @@ def test_parse_compound_times(text, seconds):
 
 @pytest.mark.parametrize("text, kind, values", [
     ("12 parts per hour", "constant", [12 / 3600]),
+    ("3 per 8 h", "constant", [3 / (8 * 3600)]),
+    ("6 m / 1 min", "constant", [6 / 60]),
+    ("1 min / 6 m", "constant", [60 / 6]),
+    ("exp(3 failures per 8 h)", "exp", [3 / (8 * 3600)]),
     ("5 Min", "constant", [300]),
     ("2 Hours", "constant", [7200]),
     ("Uniform(3 min, 4 min)", "uniform", [180, 240]),
@@ -103,147 +107,103 @@ def test_parse_rejects_a_mixed_sum():
         parse_figure("2 m + 3 s")
 
 
-def test_correct_model_passes_with_rate_info():
-    result = verify_dimensions("min", SHEET, model=line())
+def test_fitting_dimensions_pass_with_rate_info():
+    result = verify_dimensions(SHEET, model=line())
     assert result["passed"], result["findings"]
-    assert [f["check"] for f in result["findings"]] == ["converted_from_rate"]
+    assert [f["check"] for f in result["findings"]] == ["needs_inverting"]
+    assert result["checked"][0]["status"] == "info"
 
 
-@pytest.mark.parametrize("arrival, cause", [
-    ("exp(12)", "sheet figure copied without inverting or converting"),
-    ("exp(0.2)", "rate entered instead of the mean"),
-    ("exp(0.0833)", "inverted but not converted"),
-    ("exp(300)", "value in s instead of min"),
-])
-def test_rate_slips_name_their_cause(arrival, cause):
-    result = verify_dimensions("min", SHEET, model=line(arrival=arrival))
-    [finding] = by_check(result)["wrong_dimension"]
-    assert finding["component"] == "src"
-    assert finding["details"]["likely_cause"].startswith(cause)
-
-
-def test_seconds_copied_without_converting():
-    result = verify_dimensions("min", SHEET, model=line(testing="uniform(120, 180)"))
-    [finding] = by_check(result)["unit_mismatch"]
-    assert finding["details"]["likely_cause"] == "sheet figure copied without converting"
-    assert "expected uniform(2, 3) min" in finding["message"]
-
-
-def test_belt_speed_in_metres_per_second():
-    result = verify_dimensions("min", SHEET, model=line(speed=0.1))
-    [finding] = by_check(result)["unit_mismatch"]
-    assert finding["component"] == "belt"
-    assert "Travel time 1 min expected, 60 in the model" in finding["message"]
+@pytest.mark.parametrize("arrival", ["exp(5)", "exp(12)", "exp(300)"])
+def test_values_are_not_compared(arrival):
+    assert verify_dimensions(SHEET, model=line(arrival=arrival))["passed"]
 
 
 def test_rate_range_is_not_inverted():
     sheet = [{"component": "src", "field": "inter_arrival_time",
               "sheet": "uniform(15 /h, 20 /h)"}]
-    result = verify_dimensions("min", sheet, model=line(arrival="uniform(3, 4)"))
+    result = verify_dimensions(sheet, model=line(arrival="uniform(3, 4)"))
     assert "not_invertible" in by_check(result)
 
 
 def test_exp_rate_only_in_arrival_failure_and_repair():
     sheet = [{"component": "testing", "field": "processing_delay", "sheet": "exp(24 /h)"}]
-    result = verify_dimensions("min", sheet, model=line(testing="exp(2.5)"))
+    result = verify_dimensions(sheet, model=line(testing="exp(2.5)"))
     assert "not_invertible" in by_check(result)
 
 
-def test_constant_rate_inverts_in_any_time_field():
-    sheet = [{"component": "testing", "field": "processing_delay", "sheet": "24 parts/h"}]
-    result = verify_dimensions("min", sheet, model=line(testing=2.5))
-    assert result["passed"]
-    assert "converted_from_rate" in by_check(result)
+def test_constant_rate_fits_any_time_field():
+    sheet = [entry for entry in SHEET if entry["component"] != "testing"]
+    sheet.append({"component": "testing", "field": "processing_delay", "sheet": "24 parts/h"})
+    result = verify_dimensions(sheet, model=line(testing=2.5))
+    assert result["passed"], result["findings"]
+    assert "needs_inverting" in by_check(result)
 
 
-def test_length_for_a_time_field_is_rejected():
-    sheet = [{"component": "testing", "field": "processing_delay", "sheet": "3 m"}]
-    result = verify_dimensions("min", sheet, model=line())
-    assert "incompatible_dimension" in by_check(result)
+def test_a_rate_of_zero_is_rejected():
+    sheet = [{"component": "src", "field": "inter_arrival_time", "sheet": "0 /h"}]
+    assert "invalid_figure" in by_check(verify_dimensions(sheet, model=line()))
+
+
+@pytest.mark.parametrize("component, field, sheet", [
+    ("testing", "processing_delay", "3 m"),
+    ("belt", "speed", "6 m"),
+    ("belt", "conveyor_length", "6 m/s"),
+    ("b_in", "capacity", "5 m"),
+    ("testing", "processing_delay", "3"),
+])
+def test_wrong_dimension_is_incompatible(component, field, sheet):
+    figures = [{"component": component, "field": field, "sheet": sheet}]
+    [finding] = by_check(verify_dimensions(figures, model=line()))["incompatible_dimension"]
+    assert finding["component"] == component
+
+
+def test_a_mixed_sum_is_an_invalid_figure():
+    sheet = [{"component": "testing", "field": "processing_delay", "sheet": "2 min + 3 m"}]
+    assert "invalid_figure" in by_check(verify_dimensions(sheet, model=line()))
+
+
+def test_mixed_dimensions_in_a_distribution_are_rejected():
+    sheet = [{"component": "testing", "field": "processing_delay",
+              "sheet": "uniform(2 min, 3 m)"}]
+    assert "invalid_figure" in by_check(verify_dimensions(sheet, model=line()))
+
+
+def test_a_field_without_model_value_is_rejected():
+    sheet = [{"component": "testing", "field": "time_to_failure", "sheet": "exp(8 h)"}]
+    [finding] = by_check(verify_dimensions(sheet, model=line()))["invalid_figure"]
+    assert "no value" in finding["message"]
 
 
 def test_unknown_component_and_field_name_the_closest():
     sheet = [{"component": "bellt", "field": "speed", "sheet": "6 m/min"},
              {"component": "belt", "field": "sped", "sheet": "6 m/min"}]
-    result = verify_dimensions("min", sheet, model=line())
+    result = verify_dimensions(sheet, model=line())
     unknown = by_check(result)["unknown_entry"]
     assert "Closest: belt." in unknown[0]["message"]
     assert "Closest: speed." in unknown[1]["message"]
 
 
-def test_undeclared_time_field_is_a_hint():
-    result = verify_dimensions("min", SHEET[1:], model=line())
-    [hint] = by_check(result)["undeclared"]
-    assert (hint["component"], hint["severity"]) == ("src", "hint")
+def test_undeclared_time_field_is_an_error():
+    result = verify_dimensions(SHEET[1:], model=line())
+    [finding] = by_check(result)["undeclared"]
+    assert (finding["component"], finding["severity"]) == ("src", "error")
+    assert not result["passed"]
 
 
-def test_calendar_windows_in_hours():
+def test_calendar_windows():
     m = line()
     create_shift_calendar("shifts", cycle=1440, windows=[[0, 480]], model=m)
-    sheet = [{"component": "shifts", "field": "cycle", "sheet": "24 h"},
-             {"component": "shifts", "field": "windows", "sheet": "[[0 h, 8 h]]"}]
-    assert verify_dimensions("min", sheet, model=m)["passed"]
-
-    wrong = line()
-    create_shift_calendar("shifts", cycle=24, windows=[[0, 8]], model=wrong)
-    found = by_check(verify_dimensions("min", sheet, model=wrong))["unit_mismatch"]
-    assert {f["details"]["likely_cause"] for f in found} == {
-        "sheet figure copied without converting"
-    }
-
-
-def test_a_bare_zero_takes_the_field_unit():
-    m = line(testing="uniform(0, 3)")
-    create_shift_calendar("shifts", cycle=1440, windows=[[0, 480]], model=m)
-    sheet = [{"component": "testing", "field": "processing_delay",
-              "sheet": "uniform(0, 180 s)"},
-             {"component": "src", "field": "node_setup_time", "sheet": "0"},
-             {"component": "shifts", "field": "windows", "sheet": "[[0, 8 h]]"}]
-    result = verify_dimensions("min", sheet, model=m)
+    sheet = SHEET + [{"component": "shifts", "field": "cycle", "sheet": "24 h"},
+                     {"component": "shifts", "field": "windows", "sheet": "[[0, 8 h]]"}]
+    result = verify_dimensions(sheet, model=m)
     assert result["passed"], result["findings"]
+    wrong = [{"component": "shifts", "field": "windows", "sheet": "[[0 h, 8 m]]"}]
+    assert "incompatible_dimension" in by_check(verify_dimensions(wrong, model=m))
 
 
-def test_an_info_in_a_list_is_not_an_error():
-    m = line()
-    create_shift_calendar("shifts", cycle=1440, windows=[[0, 480]], model=m)
-    sheet = [{"component": "shifts", "field": "windows", "sheet": "[[0 h, 0.125 /h]]"}]
-    result = verify_dimensions("min", sheet, model=m)
-    assert result["passed"]
-    assert result["checked"][0]["status"] == "info"
-    assert "converted_from_rate" in by_check(result)
-
-
-def test_a_wrong_count_is_a_value_mismatch():
-    sheet = [{"component": "b_in", "field": "capacity", "sheet": "3 places"}]
-    result = verify_dimensions("min", sheet, model=line())
-    [finding] = by_check(result)["value_mismatch"]
-    assert "unit_mismatch" not in by_check(result)
-    assert "Likely cause" not in finding["message"]
-
-
-@pytest.mark.parametrize("testing, check, cause", [
-    (3.5, None, None),
-    (210, "unit_mismatch", "value in s instead of min"),
-])
-def test_uniform_on_the_sheet_against_a_constant_compares_means(testing, check, cause):
-    sheet = [{"component": "testing", "field": "processing_delay",
-              "sheet": "uniform(3 min, 4 min)"}]
-    result = verify_dimensions("min", sheet, model=line(testing=testing))
-    if check is None:
-        assert result["passed"], result["findings"]
-    else:
-        [finding] = by_check(result)[check]
-        assert finding["details"]["likely_cause"] == cause
-
-
-def test_a_bare_number_other_than_zero_is_still_rejected():
-    sheet = [{"component": "testing", "field": "processing_delay", "sheet": "3"}]
-    result = verify_dimensions("min", sheet, model=line())
-    assert "incompatible_dimension" in by_check(result)
-
-
-def test_rejects_bad_units_and_empty_model():
-    with pytest.raises(ValueError, match="time_unit"):
-        verify_dimensions("minutes", SHEET, model=line())
+def test_rejects_bad_arguments_and_empty_model():
+    with pytest.raises(ValueError, match="list"):
+        verify_dimensions("exp(5 min)", model=line())
     with pytest.raises(ValueError, match="empty"):
-        verify_dimensions("min", SHEET, model=FactoryModel())
+        verify_dimensions(SHEET, model=FactoryModel())

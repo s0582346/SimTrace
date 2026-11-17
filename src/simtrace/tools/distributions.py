@@ -49,6 +49,14 @@ def is_distribution_spec(value: object) -> bool:
     return isinstance(value, str) and _SPEC_RE.match(value) is not None
 
 
+def unquote(text: str) -> str:
+    """`text` without one pair of quote marks around it: '"exp(5)"' -> 'exp(5)'."""
+    stripped = text.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in "\"'":
+        return stripped[1:-1].strip()
+    return stripped
+
+
 def parse_delay(name: str, value: DelaySpec) -> Union[int, float, Callable[[], float]]:
     """Resolve a delay param to a constant or a zero-arg sampler.
 
@@ -74,6 +82,7 @@ def parse_delay(name: str, value: DelaySpec) -> Union[int, float, Callable[[], f
     if isinstance(value, (int, float)):
         return value
 
+    value = unquote(value)
     match = _SPEC_RE.match(value)
     if match is None:
         raise ValueError(
@@ -119,7 +128,7 @@ def spec_parts(value: object) -> tuple[str, float, float | None] | None:
     """
     if not isinstance(value, str):
         return None
-    match = _SPEC_RE.match(value)
+    match = _SPEC_RE.match(unquote(value))
     if match is None:
         return None
     b = match.group("b")

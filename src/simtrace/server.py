@@ -67,12 +67,8 @@ Modeling patterns:
   upstream node's out_edge_selection="ROUND_ROBIN" to spread items evenly.
 - Pass seed to run_simulation for a reproducible run. Every run_simulation
   also runs verify_item_flow, verify_extreme_conditions and
-  verify_time_course and returns their findings under `checks`. Read them
-  against the data sheet. Use verify_conservation to catch lost items.
-- Units: after building, call verify_dimensions with each figure as the
-  sheet writes it, unit included ("12 /h", "uniform(120 s, 180 s)",
-  "0.1 m/s"). It converts every figure to the
-  model's units and names the likely cause of each mismatch.
+  verify_time_course and returns their findings under `checks`. Use
+  verify_conservation to catch lost items.
 - Stochastic models (any distribution string, or RANDOM selection): one
   run_simulation is a single sample and can be badly unrepresentative. Before
   quoting throughput or utilization, use run_replications — it runs the model
