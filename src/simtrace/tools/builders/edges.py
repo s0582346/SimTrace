@@ -102,7 +102,8 @@ def create_conveyor(
     A conveyor moves items along a belt; travel time derives from
     length/speed. It connects exactly one src node to one dest node (both wired
     later via connect). Its capacity is *derived*, not set directly:
-    capacity = int(ceil(conveyor_length) / item_length), and must be >= 1.
+    capacity = whole parts that fit, int(conveyor_length / item_length), and
+    must be >= 1.
     Args:
         id: unique edge identifier (unique across nodes and edges).
         conveyor_length: physical length of the belt; must be > 0.
@@ -127,7 +128,7 @@ def create_conveyor(
     # how many items fit on the belt. FactorySimPy works it out from
     # length and item size. If an item is longer than the whole belt, this comes
     # out as 0, which FactorySimPy rejects, so we check for it below.
-    capacity = int(math.ceil(conveyor_length) / item_length)
+    capacity = int(math.floor(conveyor_length / item_length + 1e-9))
     if capacity < 1:
         raise ValueError(
             "derived conveyor capacity must be >= 1; item_length "

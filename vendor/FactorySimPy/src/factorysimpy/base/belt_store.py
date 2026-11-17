@@ -42,7 +42,7 @@ class BeltStore(Store):
            reservations_get (list):List of successful get reservations
         """
    
-    def __init__(self, env, capacity=float('inf'), speed=1, accumulation_mode_indicator=True):
+    def __init__(self, env, capacity=float('inf'), speed=1, accumulation_mode_indicator=True, travel_time=None):
         """
         Initializes a reservable store with reservations.
 
@@ -56,9 +56,12 @@ class BeltStore(Store):
                                                        Defaults to True.
          capacity (int, optional): The maximum number of items the store can hold.
                                       Defaults to infinity.
+         travel_time (float, optional): Time an item needs from one end of the belt to the other,
+                                      belt length / speed. Defaults to item length * capacity / speed.
         """
         super().__init__(env, capacity)
         self.env = env
+        self.travel_time = travel_time
         
         self.speed = speed  # Speed of the conveyor belt (units per time)
         self.reserve_put_queue = []  # Queue for managing reserve_put reservations
@@ -193,7 +196,7 @@ class BeltStore(Store):
                     #There is an item going to be in ready_items in the same time step, so do not allow another item to be put. It is because "put" was called first before the otem was moved to ready_items. all happens at same time instant.
                     if np.abs(time_on_belt  - self.items[-1][0].length/self.speed) < 1e-5 or time_on_belt > self.items[-1][0].length/self.speed:
                         print("the last item check",self.items[0][0].id, time_on_belt_last_item)
-                        if time_on_belt_last_item >= self.items[0][0].length* self.capacity/self.speed:
+                        if time_on_belt_last_item >= (self.travel_time if self.travel_time is not None else self.items[0][0].length* self.capacity/self.speed):
                             print("the first item check",self.items[0][0].id, time_on_belt_last_item)
                     #if self.env.now>= self.items[-1][0].conveyor_entry_time + self.items[-1][0].length/self.speed:
                         #print(f"At time={self.env.now:.2f}, Process {self.env.active_process} "

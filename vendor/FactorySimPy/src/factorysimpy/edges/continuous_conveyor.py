@@ -32,7 +32,9 @@ class ConveyorBelt(Edge):
         belt (BeltStore): The belt store object.
     """
     def __init__(self, env, id, conveyor_length, speed,item_length,accumulating):
-        capacity = int(np.ceil(conveyor_length)/item_length)
+        # Whole parts that fit: the ratio of the two lengths, rounded down.
+        # The small addition keeps 6 / 0.3 = 19.999... at 20.
+        capacity = int(np.floor(conveyor_length / item_length + 1e-9))
         super().__init__(env, id, capacity)
        
         self.state = "IDLE_STATE"
@@ -41,9 +43,8 @@ class ConveyorBelt(Edge):
         
         self.accumulating = accumulating
         self.speed=speed
-        self.delay = int(self.conveyor_length/self.speed)*capacity
-        #self.delay = (self.length*self.speed)/capacity
-        self.belt = BeltStore(env, capacity, self.speed, self.accumulating)
+        self.travel_time = self.conveyor_length / self.speed  # one end to the other
+        self.belt = BeltStore(env, capacity, self.speed, self.accumulating, self.travel_time)
       
         
         
@@ -168,7 +169,7 @@ class ConveyorBelt(Edge):
         """
         #delay=self.get_delay(self.delay)
         print(f"T={self.env.now:.2f}: Conveyor:put: putting item {item.id} ")
-        delay = self.length * self.capacity/self.speed
+        delay = self.travel_time
         item.conveyor_entry_time = self.env.now
         item_to_put = (item, delay)
         print(f"T={self.env.now:.2f}: {self.id }:put: putting item {item_to_put[0].id} on belt with delay {item_to_put[1]} {self.state}")

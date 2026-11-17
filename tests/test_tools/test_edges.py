@@ -147,6 +147,14 @@ def test_conveyor_accumulating_echoed(model):
     assert summary["capacity"] == 10
 
 
+@pytest.mark.parametrize("length, item, places", [(6, 0.3, 20), (8, 0.4, 20), (6.5, 0.3, 21)])
+def test_conveyor_capacity_is_the_whole_parts_that_fit(model, length, item, places):
+    result = create_conveyor("cv1", conveyor_length=length, speed=1, item_length=item,
+                             model=model)
+    assert result["capacity"] == places
+    assert model.edges["cv1"].capacity == places
+
+
 def test_conveyor_capacity_floored_to_zero_rejected(model):
     # item_length larger than the belt -> derived capacity 0.
     with pytest.raises(ValueError, match="capacity must be >= 1"):

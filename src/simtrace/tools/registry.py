@@ -344,8 +344,8 @@ def register_tools(mcp: FastMCP) -> FastMCP:
 
         Travel time derives from length/speed. It connects exactly one src node
         to one dest node (both wired later via connect). The belt's capacity is
-        derived (int(ceil(conveyor_length) / item_length)) and returned in the
-        summary; it must come out >= 1.
+        derived (the whole parts that fit, int(conveyor_length / item_length))
+        and returned in the summary; it must come out >= 1.
 
         Args:
             id: unique edge identifier (unique across nodes and edges).
