@@ -26,20 +26,16 @@ The other three are dynamic and inspect what a *completed* run did:
     stop?" by recording every edge's level and every station's state over a
     copy of the run.
 
-One compares the data sheet with the model:
+The dimension test is not a tool here: with strict units it runs in every
+create_* call (see `simtrace.tools.units`).
 
-  - `dimensions.verify_dimensions` - "does every sheet figure have the
-    dimension of the model field it went into?" by reading each figure, as
-    the sheet writes it with its unit.
-
-This package re-exports all six so `from simtrace.tools.validation import ...`
+This package re-exports all five so `from simtrace.tools.validation import ...`
 and `validation.<tool>` keep working as a single tool surface.
 """
 
 from __future__ import annotations
 
 from simtrace.tools.validation.conservation import verify_conservation
-from simtrace.tools.validation.dimensions import verify_dimensions
 from simtrace.tools.validation.extreme_conditions import verify_extreme_conditions
 from simtrace.tools.validation.item_flow import verify_item_flow
 from simtrace.tools.validation.model_check import validate_model
@@ -51,5 +47,4 @@ __all__ = [
     "verify_item_flow",
     "verify_extreme_conditions",
     "verify_time_course",
-    "verify_dimensions",
 ]

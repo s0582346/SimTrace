@@ -5,6 +5,7 @@ from mcp.server.fastmcp import FastMCP
 
 from simtrace.model import configure_units, get_model, reset_model
 from simtrace.tools.registry import register_tools
+from simtrace.tools.units import read
 
 
 @pytest.fixture
@@ -124,6 +125,104 @@ def test_quote_marks_around_a_setting_are_dropped(tools):
     configure_units(False)
     tools["reset_model"]()
     tools["create_machine"](id="m", processing_delay='"uniform(3, 4)"')
+
+
+# --- planted errors: one setting of each dimension, given a wrong one ---------
+
+# (tool, id, setting, right argument, wrong arguments, dimension needed).
+# Every other argument of the call is right, so only the planted one can fail.
+PLANTED = [
+    ("create_machine", "m", "processing_delay", "uniform(3 min, 4 min)",
+     ["uniform(3 m, 4 m)", "3 parts/min", "3 m/min", "3 parts"], "time"),
+    ("create_source", "s", "item_length", "0.3 m",
+     ["0.3 min", "0.3 m/s", "3 parts/h", "3 parts"], "length"),
+    ("create_conveyor", "c", "speed", "6 m/min",
+     ["6 m", "6 min", "20 parts/min", "6 parts"], "length/time"),
+]
+OTHER = {
+    "create_machine": {},
+    "create_source": {"inter_arrival_time": "exp(5 min)"},
+    "create_conveyor": {"conveyor_length": "6 m", "item_length": "0.3 m"},
+}
+
+
+def planted_cases():
+    for tool, id_, setting, right, wrongs, needs in PLANTED:
+        for wrong in wrongs:
+            yield pytest.param(tool, id_, setting, right, wrong, needs,
+                               id=f"{setting}={wrong}")
+
+
+@pytest.mark.parametrize("tool, id_, setting, right, wrong, needs", list(planted_cases()))
+def test_a_planted_wrong_dimension_is_refused_and_the_right_one_is_built(
+        tools, tool, id_, setting, right, wrong, needs):
+    tools["reset_model"]()
+    with pytest.raises(ValueError, match=rf"the setting needs \[{needs}\]\.$"):
+        tools[tool](id=id_, **OTHER[tool], **{setting: wrong})
+    assert not get_model().has_node(id_) and not get_model().has_edge(id_)
+    tools[tool](id=id_, **OTHER[tool], **{setting: right})
+
+
+@pytest.mark.parametrize("wrong", ["8 h", "8 m", "3 parts/h"])
+def test_a_count_takes_no_unit(tools, wrong):
+    tools["reset_model"]()
+    with pytest.raises(ValueError):
+        tools["create_buffer"](id="b", capacity=wrong)
+
+
+@pytest.mark.parametrize("wrong", ["10 m", "12 parts/h", "1 m/min"])
+def test_a_planted_wrong_run_length_is_refused(tools, wrong):
+    line(tools)
+    with pytest.raises(ValueError, match=r"the setting needs \[time\]\.$"):
+        tools["run_simulation"](until=wrong, seed=1)
+
+
+# --- reading arguments -------------------------------------------------------
+
+@pytest.mark.parametrize("text, dim, value", [
+    ("5 * 8 h", (1, 0), 5 * 8 * 3600),
+    ("2 h 30 min", (1, 0), 9000),
+    ("1 h 30 min 15 s", (1, 0), 5415),
+    ("2 h 30 min / 2", (1, 0), 7200 + 900),
+    ("1 m 20 cm", (0, 1), 1.2),
+    ("12 parts/h", (-1, 0), 12 / 3600),
+    ("12 parts per hour", (-1, 0), 12 / 3600),
+    ("3 per 8 h", (-1, 0), 3 / (8 * 3600)),
+    ("0.1 m/s", (-1, 1), 0.1),
+    ("6 m / 1 min", (-1, 1), 6 / 60),
+    ("2 m·s⁻¹", (-1, 1), 2),
+    ("1 m/s²", (-2, 1), 1),
+    ("1 / (12 parts/h)", (1, 0), 300),
+    ("5 Min", (1, 0), 300),
+])
+def test_read_units(text, dim, value):
+    [quantity] = read(text).args
+    assert quantity.dim == dim
+    assert quantity.value == pytest.approx(value)
+
+
+@pytest.mark.parametrize("text, kind, values", [
+    ("Uniform(3 min, 4 min)", "uniform", [180, 240]),
+    ("EXP(5 min)", "exp", [300]),
+    ("Gauss(8 min, 3 min)", "normal", [480, 180]),
+    ("exp(3 failures per 8 h)", "exp", [3 / (8 * 3600)]),
+])
+def test_read_distributions(text, kind, values):
+    expression = read(text)
+    assert expression.kind == kind
+    assert [q.value for q in expression.args] == pytest.approx(values)
+
+
+@pytest.mark.parametrize("text", ["2 h 30", "2 m + 3 s"])
+def test_a_sum_of_two_dimensions_cannot_be_read(text):
+    with pytest.raises(ValueError, match="sum"):
+        read(text)
+
+
+def test_mixed_dimensions_in_a_distribution_are_refused(tools):
+    tools["reset_model"]()
+    with pytest.raises(ValueError, match=r"is \[length\], the setting needs \[time\]"):
+        tools["create_machine"](id="m", processing_delay="uniform(2 min, 3 m)")
 
 
 def test_descriptions_name_the_unit_rule_only_when_strict():

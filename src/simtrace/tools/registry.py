@@ -832,29 +832,4 @@ def register_tools(mcp: FastMCP) -> FastMCP:
         """
         return validation.verify_time_course(until, seed=seed)
 
-    # verify_dimensions is not offered as a tool: with SIMTRACE_STRICT_UNITS the create_* tools check every dimension in the call.
-    # @mcp.tool()
-    # @traced
-    # def verify_dimensions(figures: list[dict]) -> dict:
-    #     """Check each model setting against the data sheet: does its dimension fit? (Dimension test after Rabe et al.)
-    #
-    #     Call it after building. Pass one entry per setting you took from the
-    #     sheet. `sheet` is the sheet's value with its unit, as written. If you
-    #     calculated the setting from several sheet values, write the
-    #     calculation, e.g. length / time.
-    #
-    #     Args:
-    #         figures: [{"component": <id>, "field": <create_* argument>,
-    #             "sheet": <text>}], e.g. {"component": "press", "field":
-    #             "processing_delay", "sheet": "uniform(50 s, 75 s)"}. Units: s,
-    #             min, h, d, mm, cm, m, km. Words like parts or pallets have no
-    #             dimension.
-    #
-    #     A rate fits a time setting after inverting (info needs_inverting), a
-    #     rate range does not (not_invertible). Errors: incompatible_dimension,
-    #     not_invertible, invalid_figure, unknown_entry, undeclared (a time,
-    #     length or speed setting that was not passed).
-    #     """
-    #     return validation.verify_dimensions(figures=figures)
-
     return mcp
